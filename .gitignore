@@ -166,4 +166,4 @@ test.xm
 output/
 
 # python
-python/
+python/.DS_Store
