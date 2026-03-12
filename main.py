@@ -1,18 +1,20 @@
 import base64
 import io
 import sys
-import magic
-import pathlib
 import os
 import glob
+import pathlib
+import struct
 import mutagen
 import tkinter as tk
 from tkinter import filedialog
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from mutagen.easyid3 import ID3
-from wasmer import Store, Module, Instance, Uint8Array, Int32Array, engine
-from wasmer_compiler_cranelift import Compiler
+import wasmtime
+
+
+_WASM_RUNTIME = None
 
 
 class XMInfo:
@@ -67,20 +69,39 @@ def get_printable_count(x: bytes):
         # all pritable
         if c < 0x20 or c > 0x7e:
             return i
-    return i
+    return len(x)
 
 
 def get_printable_bytes(x: bytes):
     return x[:get_printable_count(x)]
 
 
+def get_wasm_runtime():
+    global _WASM_RUNTIME
+    if _WASM_RUNTIME is not None:
+        return _WASM_RUNTIME
+
+    engine = wasmtime.Engine()
+    store = wasmtime.Store(engine)
+    wasm_path = pathlib.Path(__file__).with_name("xm_encryptor.wasm")
+    module = wasmtime.Module.from_file(engine, str(wasm_path))
+    instance = wasmtime.Instance(store, module, [])
+    exports = instance.exports(store)
+
+    _WASM_RUNTIME = {
+        "store": store,
+        "a": exports["a"],
+        "c": exports["c"],
+        "g": exports["g"],
+        "i": exports["i"],
+    }
+    return _WASM_RUNTIME
+
+
 def xm_decrypt(raw_data):
-    # load xm encryptor
-    # print("loading xm encryptor")
-    xm_encryptor = Instance(Module(
-        Store(engine.Universal(Compiler)),
-        pathlib.Path("./xm_encryptor.wasm").read_bytes()
-    ))
+    wasm_runtime = get_wasm_runtime()
+    store = wasm_runtime["store"]
+
     # decode id3
     xm_info = get_xm_info(raw_data)
     # print("id3 header size: ", hex(xm_info.header_size))
@@ -95,34 +116,23 @@ def xm_decrypt(raw_data):
     cipher = AES.new(xm_key, AES.MODE_CBC, xm_info.iv())
     de_data = cipher.decrypt(pad(encrypted_data, 16))
     # print("success")
-    # Stage 2 xmDecrypt
+    # Stage 2 xmDecrypt (wasm)
     de_data = get_printable_bytes(de_data)
     track_id = str(xm_info.tracknumber).encode()
-    stack_pointer = xm_encryptor.exports.a(-16)
-    assert isinstance(stack_pointer, int)
-    de_data_offset = xm_encryptor.exports.c(len(de_data))
-    assert isinstance(de_data_offset, int)
-    track_id_offset = xm_encryptor.exports.c(len(track_id))
-    assert isinstance(track_id_offset, int)
-    memory_i = xm_encryptor.exports.i
-    memview_unit8: Uint8Array = memory_i.uint8_view(offset=de_data_offset)
-    for i, b in enumerate(de_data):
-        memview_unit8[i] = b
-    memview_unit8: Uint8Array = memory_i.uint8_view(offset=track_id_offset)
-    for i, b in enumerate(track_id):
-        memview_unit8[i] = b
-    # print(bytearray(memory_i.buffer)[track_id_offset:track_id_offset + len(track_id)].decode())
-    # print(f"decrypt stage 2 (xmDecrypt):\n"
-    #       f"    stack_pointer = {stack_pointer},\n"
-    #       f"    data_pointer = {de_data_offset}, data_length = {len(de_data)},\n"
-    #       f"    track_id_pointer = {track_id_offset}, track_id_length = {len(track_id)}")
-    # print("success")
-    xm_encryptor.exports.g(stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
-    memview_int32: Int32Array = memory_i.int32_view(offset=stack_pointer // 4)
-    result_pointer = memview_int32[0]
-    result_length = memview_int32[1]
-    assert memview_int32[2] == 0, memview_int32[3] == 0
-    result_data = bytearray(memory_i.buffer)[result_pointer:result_pointer + result_length].decode()
+    stack_pointer = wasm_runtime["a"](store, -16)
+    de_data_offset = wasm_runtime["c"](store, len(de_data))
+    track_id_offset = wasm_runtime["c"](store, len(track_id))
+    memory = wasm_runtime["i"]
+
+    memory.write(store, de_data, start=de_data_offset)
+    memory.write(store, track_id, start=track_id_offset)
+    wasm_runtime["g"](store, stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
+
+    result_meta = bytes(memory.read(store, stack_pointer, stack_pointer + 16))
+    result_pointer, result_length, status_code, extra_code = struct.unpack("<4i", result_meta)
+    if status_code != 0 or extra_code != 0:
+        raise RuntimeError(f"wasm decrypt failed: status={status_code}, extra={extra_code}")
+    result_data = bytes(memory.read(store, result_pointer, result_pointer + result_length)).decode()
     # Stage 3 combine
     # print(f"Stage 3 (base64)")
     decrypted_data = base64.b64decode(xm_info.encoding_technology + result_data)
@@ -132,31 +142,42 @@ def xm_decrypt(raw_data):
 
 
 def find_ext(data):
-    exts = ["m4a", "mp3", "flac", "wav"]
-    value = magic.from_buffer(data).lower()
-    for ext in exts:
-        if ext in value:
-            return ext
-    raise Exception(f"unexpected format {value}")
+    if len(data) >= 8 and data[4:8] == b'ftyp':
+        return "m4a"
+    if data[:2] in [b'\xff\xf1', b'\xff\xf9']:
+        return "aac"
+    if data[:3] == b'ID3':
+        return "mp3"
+    if data[:4] == b'fLaC':
+        return "flac"
+    if data[:4] == b'RIFF':
+        return "wav"
+    return "aac"
 
 
 def decrypt_xm_file(from_file, output_path='./output'):
     print(f"正在解密{from_file}")
     data = read_file(from_file)
     info, audio_data = xm_decrypt(data)
-    output = f"{output_path}/{replace_invalid_chars(info.album)}/{replace_invalid_chars(info.title)}.{find_ext(audio_data[:0xff])}"
+    ext = find_ext(audio_data[:0xff])
+    output = f"{output_path}/{replace_invalid_chars(info.album)}/{replace_invalid_chars(info.title)}.{ext}"
     if not os.path.exists(f"{output_path}/{replace_invalid_chars(info.album)}"):
         os.makedirs(f"{output_path}/{replace_invalid_chars(info.album)}")
-    buffer = io.BytesIO(audio_data)
-    tags = mutagen.File(buffer, easy=True)
-    tags["title"] = info.title
-    tags["album"] = info.album
-    tags["artist"] = info.artist
-    print(tags.pprint())
-    tags.save(buffer)
     with open(output, "wb") as f:
-        buffer.seek(0)
-        f.write(buffer.read())
+        f.write(audio_data)
+
+    # Best-effort metadata writing: do not fail decryption when tagging is unsupported.
+    if ext in ["mp3", "flac", "m4a"]:
+        try:
+            tags = mutagen.File(output, easy=True)
+            if tags is not None:
+                tags["title"] = [info.title]
+                tags["album"] = [info.album]
+                tags["artist"] = [info.artist]
+                tags.save()
+        except Exception as e:
+            print(f"写入标签失败，已跳过：{e}")
+
     print(f"解密成功，文件保存至{output}！")
 
 
