@@ -155,12 +155,33 @@ def find_ext(data):
     return "aac"
 
 
-def decrypt_xm_file(from_file, output_path='./output'):
+def get_xm_track_id(from_file):
+    id3 = ID3(from_file, v2_version=3)
+    trck = str(id3["TRCK"])
+    return int(trck.split("/")[0])
+
+
+def sort_files_by_track_id(files_to_decrypt):
+    def sort_key(path):
+        try:
+            return (get_xm_track_id(path), path)
+        except Exception:
+            # Keep undecodable files at the end but deterministic by path.
+            return (sys.maxsize, path)
+
+    return sorted(files_to_decrypt, key=sort_key)
+
+
+def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_total=None):
     print(f"正在解密{from_file}")
     data = read_file(from_file)
     info, audio_data = xm_decrypt(data)
     ext = find_ext(audio_data[:0xff])
-    output = f"{output_path}/{replace_invalid_chars(info.album)}/{replace_invalid_chars(info.title)}.{ext}"
+    safe_title = replace_invalid_chars(info.title)
+    if track_no is not None and track_total is not None:
+        width = len(str(track_total))
+        safe_title = f"{track_no:0{width}d} - {safe_title}"
+    output = f"{output_path}/{replace_invalid_chars(info.album)}/{safe_title}.{ext}"
     if not os.path.exists(f"{output_path}/{replace_invalid_chars(info.album)}"):
         os.makedirs(f"{output_path}/{replace_invalid_chars(info.album)}")
     with open(output, "wb") as f:
@@ -174,6 +195,8 @@ def decrypt_xm_file(from_file, output_path='./output'):
                 tags["title"] = [info.title]
                 tags["album"] = [info.album]
                 tags["artist"] = [info.artist]
+                if track_no is not None and track_total is not None:
+                    tags["tracknumber"] = [f"{track_no}/{track_total}"]
                 tags.save()
         except Exception as e:
             print(f"写入标签失败，已跳过：{e}")
@@ -226,6 +249,8 @@ if __name__ == "__main__":
                     print("检测到目录选择窗口被关闭")
                     continue
                 files_to_decrypt = glob.glob(os.path.join(dir_to_decrypt, "*.xm"))
+            files_to_decrypt = sort_files_by_track_id(files_to_decrypt)
+            track_total = len(files_to_decrypt)
             print("请选择是否需要设置输出路径：（不设置默认为本程序目录下的output文件夹）")
             print("1. 设置输出路径")
             print("2. 不设置输出路径")
@@ -237,8 +262,8 @@ if __name__ == "__main__":
                     continue
             elif choice == "2":
                 output_path = "./output"
-            for file in files_to_decrypt:
-                decrypt_xm_file(file, output_path)
+            for i, file in enumerate(files_to_decrypt, start=1):
+                decrypt_xm_file(file, output_path, i, track_total)
         elif choice == "3":
             sys.exit()
         else:
