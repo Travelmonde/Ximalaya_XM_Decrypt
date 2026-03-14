@@ -10,7 +10,9 @@ import tkinter as tk
 from tkinter import filedialog
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
+from mutagen.id3 import TALB, TIT2, TPE1, TRCK
 from mutagen.easyid3 import ID3
+from mutagen.wave import WAVE
 import wasmtime
 
 
@@ -188,8 +190,8 @@ def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_tota
         f.write(audio_data)
 
     # Best-effort metadata writing: do not fail decryption when tagging is unsupported.
-    if ext in ["mp3", "flac", "m4a"]:
-        try:
+    try:
+        if ext in ["mp3", "flac", "m4a"]:
             tags = mutagen.File(output, easy=True)
             if tags is not None:
                 tags["title"] = [info.title]
@@ -198,8 +200,18 @@ def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_tota
                 if track_no is not None and track_total is not None:
                     tags["tracknumber"] = [f"{track_no}/{track_total}"]
                 tags.save()
-        except Exception as e:
-            print(f"写入标签失败，已跳过：{e}")
+        elif ext == "wav":
+            wave_file = WAVE(output)
+            if wave_file.tags is None:
+                wave_file.add_tags()
+            wave_file.tags.add(TIT2(encoding=3, text=[info.title]))
+            wave_file.tags.add(TALB(encoding=3, text=[info.album]))
+            wave_file.tags.add(TPE1(encoding=3, text=[info.artist]))
+            if track_no is not None and track_total is not None:
+                wave_file.tags.add(TRCK(encoding=3, text=[f"{track_no}/{track_total}"]))
+            wave_file.save()
+    except Exception as e:
+        print(f"写入标签失败，已跳过：{e}")
 
     print(f"解密成功，文件保存至{output}！")
 
