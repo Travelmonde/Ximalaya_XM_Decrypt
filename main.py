@@ -5,6 +5,7 @@ import os
 import glob
 import pathlib
 import struct
+import subprocess
 import mutagen
 import tkinter as tk
 from tkinter import filedialog
@@ -174,7 +175,31 @@ def sort_files_by_track_id(files_to_decrypt):
     return sorted(files_to_decrypt, key=sort_key)
 
 
-def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_total=None):
+def transcode_wav_to_alac(file_path):
+    output_path = os.path.splitext(file_path)[0] + ".m4a"
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            file_path,
+            "-map_metadata",
+            "0",
+            "-c:a",
+            "alac",
+            output_path,
+        ]
+    )
+    if result.returncode != 0:
+        raise RuntimeError("ffmpeg 封装 ALAC 失败，请检查 ffmpeg 是否可用")
+    os.remove(file_path)
+    return output_path
+
+
+def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_total=None, wav_mode="keep"):
     print(f"正在解密{from_file}")
     data = read_file(from_file)
     info, audio_data = xm_decrypt(data)
@@ -210,6 +235,9 @@ def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_tota
             if track_no is not None and track_total is not None:
                 wave_file.tags.add(TRCK(encoding=3, text=[f"{track_no}/{track_total}"]))
             wave_file.save()
+            if wav_mode == "alac":
+                output = transcode_wav_to_alac(output)
+                ext = "m4a"
     except Exception as e:
         print(f"写入标签失败，已跳过：{e}")
 
@@ -274,8 +302,19 @@ if __name__ == "__main__":
                     continue
             elif choice == "2":
                 output_path = "./output"
+            print("如果解密结果中包含 WAV，请选择处理方式：")
+            print("1. 保留 WAV")
+            print("2. 封装为 ALAC (.m4a) 并保留 metadata")
+            wav_choice = input()
+            if wav_choice == "1":
+                wav_mode = "keep"
+            elif wav_choice == "2":
+                wav_mode = "alac"
+            else:
+                print("输入错误，请重新输入！")
+                continue
             for i, file in enumerate(files_to_decrypt, start=1):
-                decrypt_xm_file(file, output_path, i, track_total)
+                decrypt_xm_file(file, output_path, i, track_total, wav_mode)
         elif choice == "3":
             sys.exit()
         else:
