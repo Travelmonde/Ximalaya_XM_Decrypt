@@ -29,7 +29,7 @@ git clone https://github.com/Travelmonde/Ximalaya_XM_Decrypt.git
 ### 2. 进入项目目录
 在本地文件夹打开Terminal (Mac)或者cmd（windows）
 ```bash
-cd Ximalaya_XM_Decrypt
+cd Ximalaya-XM-Decrypt
 ```
 ### 3. 安装所需的依赖包
 安装依赖：进入项目目录，安装所需的依赖包。
