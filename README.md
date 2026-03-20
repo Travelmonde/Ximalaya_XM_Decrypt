@@ -1,4 +1,5 @@
 <h1 align="center">喜马拉雅xm文件解密工具</h1>
+
 ## 说明
 本工具用于解密喜马拉雅官方客户端下载的加密音频文件，本工具在[sld272](https://github.com/sld272/Ximalaya-XM-Decrypt.git)工作基础上进行维护工作，包括修复bug,替换老旧的库并且增加多核支持。具体解密原理请详阅@aynakeya的[博文](https://www.aynakeya.com/2023/03/15/ctf/xi-ma-la-ya-xm-wen-jian-jie-mi-ni-xiang-fen-xi/)。
 
