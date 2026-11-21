@@ -5,7 +5,7 @@
 
 使用前请确保 `xm_encryptor.wasm` 与 `main.py` 位于同一目录（放在 `xm_decrypt/` 包目录下也能被找到）。
 
-> **版本状态：0.1.0。** 完整流程只在单个样本上验证过——真机上带 `N/M` 音轨号的多音轨文件、wav/flac/mp3 载体的 xm 都没测过。操作前请自行备份原始 `.xm`。版本号保持 0.x，直到覆盖面补上来。
+> **版本状态：0.1.0（Alpha）。** 当前仅在单一测试样本上完成端到端验证；带 `N/M` 音轨号的多音轨文件，以及 wav / flac / mp3 载体的 xm 文件尚未覆盖。处理前请备份原始 `.xm`。在上述场景验证通过之前，版本号保持在 0.x。
 
 ## 功能特点
 - **终端界面（TUI）**：DOS 风格单线框 + 键盘菜单，全键盘操作，不依赖 tkinter，服务器 / SSH 环境同样可用
@@ -14,24 +14,67 @@
 - **设置持久化**：默认输入/输出目录、是否含子目录、WAV 处理方式、并行数都会记住
 - **格式支持**：mp3、aac、flac、m4a、wav；wav 可选转为 ALAC 无损 `.m4a` 以减小体积
 
+## 环境要求
+
+| 项目 | 要求 |
+| --- | --- |
+| Python | **3.10 及以上**（已在 3.10 / 3.12 / 3.13 上实测） |
+| ffmpeg | 可选，只在把 WAV 转成 ALAC 时需要 |
+
+该下限由两处约束决定：
+
+- 源码使用 `zip(..., strict=)`，该参数自 Python 3.10 起提供；
+- 随包内嵌的 mutagen 1.48 在包元数据中声明 `Requires-Python >=3.10`。
+
+发行包文件名中的 `py310` 对应这一约束。`.pyz` 不含 pyc 与包元数据，pip 无法读取版本要求，
+版本信息只能通过文件名传达。以 3.9 运行会在启动校验阶段被终止，并输出明确的版本提示。
+
 ## 安装
 
-有两种用法，按需选择：
+按目标机器是否需要安装 Python 依赖选择：
 
-**A. 直接跑单文件可执行程序（免安装 Python 依赖）**
+| 形式 | 文件 | 目标机器需要 |
+| --- | --- | --- |
+| 目录式归档（推荐） | `xm-decrypt-0.1.0-py310-none-<平台>.tar.gz`（Windows 为 `.zip`） | 能跑 Python 3.10+，依赖已随包 |
+| 单文件 `.pyz` | `xm-decrypt-0.1.0-py310-none-<平台>.pyz` | 同上，但首启要解压依赖到缓存 |
+| 免依赖可执行文件 | `xm-decrypt` | 什么都不需要（目前只有 Linux x86-64） |
+| 源码 | 仓库，或 `...-py310-none-any.tar.gz` | Python 3.10+ 和 `pip install -r requirements.txt` |
 
-从 Release 下载对应平台的 `.pyz`，例如 Linux x86-64 用
-`xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz`：
+`<平台>` 取 `linux_x86_64` / `linux_aarch64` / `win_amd64` / `macosx_11_0_arm64` /
+`macosx_10_13_x86_64` 之一，两种形式都是五个平台齐全。
+
+**A. 目录式归档（免安装，不写用户缓存）**
 
 ```bash
-python3 xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz            # 终端界面
-python3 xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz --cli -h   # 命令行
+tar xzf xm-decrypt-0.1.0-py310-none-linux_x86_64.tar.gz
+cd xm-decrypt-0.1.0
+./xm-decrypt              # 终端界面
+./xm-decrypt --cli -h     # 命令行
 ```
 
-首次运行会把内置依赖解压到 `~/.cache/xm-decrypt/`（约 53 MB，1 秒左右），之后直接复用。
-路径含中文、想换个地方时，设置 `XDG_CACHE_HOME` 即可。
+Windows 对应为同名 `.zip`，解压后执行 `xm-decrypt.bat`。默认使用 PATH 中的 `python3`
+（Windows 为 `python`）；如需指定解释器，设置环境变量：
 
-**B. 从源码运行**
+```bash
+XM_DECRYPT_PYTHON=/usr/bin/python3.12 ./xm-decrypt
+```
+
+第三方依赖位于目录内的 `_vendor/`，**不会写入 `~/.cache`**。整个目录可整体迁移，删除后无残留。
+与 `.pyz` 相比，该形式适用于受安全软件策略限制、家目录不可写，或需要直接修改代码的场景。
+
+**B. 单文件 `.pyz`（免安装 Python 依赖）**
+
+从 Release 下载对应平台的 `.pyz`，例如 Linux x86-64：
+
+```bash
+python3 xm-decrypt-0.1.0-py310-none-linux_x86_64.pyz            # 终端界面
+python3 xm-decrypt-0.1.0-py310-none-linux_x86_64.pyz --cli -h   # 命令行
+```
+
+首次运行时将内置依赖解压至 `~/.cache/xm-decrypt/`（约 53 MB），后续运行直接复用。
+如需更改缓存位置（例如路径包含非 ASCII 字符），设置环境变量 `XDG_CACHE_HOME`。
+
+**C. 从源码运行**
 
 ```bash
 git clone https://github.com/taally666/Ximalaya_XM_Decrypt_TUI.git
@@ -40,11 +83,9 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 ```
 
-> 需要 Python 3.9 及以上（已在 3.12 / 3.13 上验证）。仅在把 wav 转成 ALAC 时需要系统里有 `ffmpeg`。
+启动前会检查依赖；缺失时输出对应的 `pip install` 命令，而非抛出异常堆栈。
 
-启动时会先检查依赖，缺哪一个会直接提示对应的 `pip install` 命令，不会抛一堆堆栈。
-
-**C. 装成系统命令 `xm-decrypt`（推荐）**
+**D. 装成系统命令 `xm-decrypt`（推荐）**
 
 源码和环境就绪后，一条命令装到 `~/.local/bin`：
 
@@ -137,7 +178,8 @@ python main.py --cli --settings                          # 打印当前设置
 ├── requirements.txt
 ├── tools/                   开发与发布脚本（不参与运行）
 │   ├── install.py           打包并安装成 `xm-decrypt` 命令
-│   ├── build_release.py     多平台发行版 + 校验和清单
+│   ├── build_release.py     多平台 .pyz 发行版 + 校验和清单
+│   ├── build_archives.py    目录式归档（解压即用）与源码包
 │   ├── build_pyz.py         打包单个 .pyz（可内嵌依赖）
 │   ├── build_exe.py         打包成免依赖可执行程序
 │   ├── _vendor_boot.py      带依赖的 .pyz 首启解压逻辑
@@ -159,22 +201,67 @@ python main.py --cli --settings                          # 打印当前设置
         └── styles.tcss      样式（黑底单线框，配色集中在这一处）
 ```
 
-分层原则：`metadata` 只读文件头，`decryptor` 只算字节，`exporter` 只负责落盘，`batch` 只负责调度，界面层不碰解密细节。要在其他脚本里复用，直接 `from xm_decrypt import decrypt_xm_to` 即可。
+分层原则：`metadata` 只读文件头，`decryptor` 只算字节，`exporter` 只负责落盘，`batch` 只负责调度，界面层不碰解密细节。在其他脚本中复用可直接 `from xm_decrypt import decrypt_xm_to`。
 
 仓库只包含运行代码与 `tools/` 脚本。开发过程中的本地笔记、构建中间产物放在 `.workbuddy/`，已在 `.gitignore` 中排除，不会提交。
 
 ## 打包与分发
 
-按「要不要在目标机器装依赖」选产物：
+按目标机器是否需要安装依赖选择产物：
 
 | 产物 | 体积 | 构建 | 目标机器要求 |
 | --- | --- | --- | --- |
-| `-py3-none-any.pyz` | 53 KB | `build_release.py` / `build_pyz.py` | 已装好依赖 |
-| `-py3-none-<平台>.pyz` | 12–15 MB | `build_release.py` | 只需 `python3`（3.9+），按平台分发 |
-| `xm-decrypt`（可执行） | 81 MB | `build_exe.py` | 什么都不用，连 Python 都不需要 |
+| `-py310-none-linux_x86_64.tar.gz`（目录式） | 14 MB | `build_archives.py` | 只需 `python3` 3.10+，依赖在目录里 |
+| `-py310-none-any.pyz` | 57 KB | `build_release.py` / `build_pyz.py` | 已装好依赖 |
+| `-py310-none-<平台>.pyz` | 12–15 MB | `build_release.py` | 只需 `python3` 3.10+，按平台分发 |
+| `-py310-none-any.tar.gz`（源码） | 57 KB | `build_archives.py` | Python 3.10+ 与 `pip install` |
+| `xm-decrypt`（可执行） | 81 MB | `build_exe.py` | 无需 Python 环境 |
 
-发布用 `build_release.py`（一次产出全部平台 + 校验和清单）；`build_pyz.py` 是它的底层，
-只打单个包，想改打包细节时用。
+发布用 `build_release.py`（一次产出全部平台的 `.pyz` + 校验和清单）与
+`build_archives.py`（目录式归档 + 源码包）。`build_pyz.py` 是二者的基础模块，用于构建单个包。
+
+### 目录式归档 / 源码包
+
+```bash
+python tools/build_archives.py                 # 全部平台目录式 + 源码包
+python tools/build_archives.py --native-only   # 只打本机平台
+python tools/build_archives.py --only win_amd64 macosx_11_0_arm64
+python tools/build_archives.py --skip-dir      # 只出源码包
+```
+
+平台表与产物命名沿用 `build_release.py`，一次产出六份：五个平台的目录式归档
+（Windows 目标为 `.zip`，其余 `.tar.gz`）加一份与平台无关的源码包：
+
+```
+dist/xm-decrypt-0.1.0-py310-none-linux_x86_64.tar.gz
+dist/xm-decrypt-0.1.0-py310-none-linux_aarch64.tar.gz
+dist/xm-decrypt-0.1.0-py310-none-win_amd64.zip
+dist/xm-decrypt-0.1.0-py310-none-macosx_11_0_arm64.tar.gz
+dist/xm-decrypt-0.1.0-py310-none-macosx_10_13_x86_64.tar.gz
+dist/xm-decrypt-0.1.0-py310-none-any.tar.gz
+```
+
+本机平台的依赖从已安装的 site-packages 取，其余平台用
+`pip download --platform ... --only-binary=:all:` 拉对应 wheel 解压成 `_vendor/`，
+并在归档中校验各平台的原生库标记（`wasmtime/linux-x86_64/_libwasmtime.so` 等），
+缺失即中止。归档内容为单一目录：
+
+```
+xm-decrypt-0.1.0/
+├── xm-decrypt            启动器：检查解释器版本、把 _vendor 挂到 PYTHONPATH、再 exec main.py
+├── main.py
+├── xm_encryptor.wasm
+├── xm_decrypt/           代码
+├── _vendor/              第三方依赖，和 .pyz 内嵌的是同一份
+├── README.md
+└── requirements.txt
+```
+
+与 `.pyz` 的唯一区别是依赖的存放方式：`.pyz` 首次运行时将 `_vendor/` 解压至
+`~/.cache/xm-decrypt/libs-<哈希>/`，目录式归档则**就地加载**，不写用户家目录，也不产生缓存。
+启动器在执行前校验 `sys.version_info >= (3, 10)`，不满足时输出明确的版本提示。
+
+源码包不含 `_vendor/`，用之前需要 `pip install -r requirements.txt`。
 
 ### 单文件 .pyz（含内置依赖）
 
@@ -188,15 +275,15 @@ python xm-decrypt-standalone.pyz --cli -h     # 命令行
 ```
 
 **`.pyz` 是 zip，无法直接 import 原生扩展**（`wasmtime/_libwasmtime.so`、`Crypto/**/*.so`），
-所以内嵌依赖不是「塞进 zip 就能用」，而是首启时解压到缓存再挂到 `sys.path`：
+因此内嵌依赖需在首次运行时解压至缓存并加入 `sys.path`：
 
 - 依赖放在归档的 `_vendor/`，入口 `__main__.py` 先调用 `_xm_vendor.install()`；
-- 解压目标 `~/.cache/xm-decrypt/libs-<pyz 的 sha256 前 16 位>/`，归档变了就换目录，不会读到半新半旧的库；
-- 解压用「临时目录 + 原子改名」，多进程同时首启不会互相踩；家目录不可写时退化为进程级临时目录；
-- 首次运行约 7 秒（解压 54 MB），之后不到 1 秒。
+- 解压目标为 `~/.cache/xm-decrypt/libs-<pyz 的 sha256 前 16 位>/`，归档内容变化时目录随之变化，避免读到不一致的依赖；
+- 解压采用临时目录 + 原子改名，多进程同时首次启动不会冲突；家目录不可写时退化为进程级临时目录；
+- 首次运行约 7 秒（解压 54 MB），后续启动不足 1 秒。
 
-实测在**完全没装依赖**的系统 Python 3.12 上：解密产物 sha256 `c5ebb5d1…` 与源码一致，
-`-j 2` 并行正常，TUI 渲染出的样式规则数仍是 106。
+已在**未安装任何第三方依赖**的系统 Python 3.12 上实测：解密产物 sha256 `c5ebb5d1…` 与源码运行一致，
+`-j 2` 并行正常，TUI 渲染出的样式规则数仍是 108。
 
 ### 精简版 .pyz
 
@@ -204,14 +291,14 @@ python xm-decrypt-standalone.pyz --cli -h     # 命令行
 python tools/build_pyz.py                  # → dist/xm-decrypt.pyz（53 KB）
 ```
 
-只含 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm`，**不含第三方依赖**——
-zipapp 只是把代码打成 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的原生扩展，无法从 zip 里 import。
-换机器跑之前仍要 `pip install -r requirements.txt`；缺依赖时程序会提示装哪些包。
+只含 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm`，**不含第三方依赖**。
+zipapp 仅将代码打包为 zip，而 `wasmtime`、`pycryptodome` 属于带 `.so` 的原生扩展，无法从 zip 直接导入。
+更换机器前仍需 `pip install -r requirements.txt`；依赖缺失时程序会列出所需包名。
 
-上面两种 `.pyz` 共用的两个实现细节（改代码时别踩）：
+两种 `.pyz` 共用的两项实现约束：
 
-- **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。所以单独拷一个 `.pyz` 出去也能跑，不必附带 wasm。
-- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 106 条，外观一致。
+- **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。因此单独分发 `.pyz` 时无需附带 wasm 文件。
+- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。磁盘上存在该文件时仍使用 `CSS_PATH`（保留开发期热重载）；打包运行时改为从归档读取文本注入 `CSS`。两种方式加载的样式规则数都是 108 条，外观一致。
 
 ### 发行版（多平台）
 
@@ -220,30 +307,31 @@ python tools/build_release.py            # 全部平台
 python tools/build_release.py --native-only    # 只打本机
 ```
 
-产物命名沿用 wheel 的 tag 风格 `xm-decrypt-<版本>-py3-none-<平台>.pyz`：
+产物命名沿用 wheel 的 tag 风格 `xm-decrypt-<版本>-py310-none-<平台>.pyz`
+（`py310` = 要求 Python 3.10+，见前面的「环境要求」）：
 
 | 文件 | 平台 | 大小 |
 | --- | --- | --- |
-| `...-py3-none-any.pyz` | 通用（纯 Python） | 53 KB |
-| `...-py3-none-linux_x86_64.pyz` | Linux x86-64 | 14.6 MB |
-| `...-py3-none-linux_aarch64.pyz` | Linux ARM64 | 13.2 MB |
-| `...-py3-none-win_amd64.pyz` | Windows x64 | 11.9 MB |
-| `...-py3-none-macosx_11_0_arm64.pyz` | macOS Apple Silicon | 12.1 MB |
-| `...-py3-none-macosx_10_13_x86_64.pyz` | macOS Intel | 12.8 MB |
+| `...-py310-none-any.pyz` | 通用（纯 Python） | 57 KB |
+| `...-py310-none-linux_x86_64.pyz` | Linux x86-64 | 14.6 MB |
+| `...-py310-none-linux_aarch64.pyz` | Linux ARM64 | 13.2 MB |
+| `...-py310-none-win_amd64.pyz` | Windows x64 | 11.9 MB |
+| `...-py310-none-macosx_11_0_arm64.pyz` | macOS Apple Silicon | 12.1 MB |
+| `...-py310-none-macosx_10_13_x86_64.pyz` | macOS Intel | 12.8 MB |
 
 同时生成 `dist/SHA256SUMS-<版本>.txt`，发布时一并附上。
 
-**必须按平台分开打包，不能一个包通吃**：包里的 `wasmtime/linux-x86_64/_libwasmtime.so`、
+**各平台须分别打包**：包内的 `wasmtime/linux-x86_64/_libwasmtime.so`、
 `Crypto/Cipher/_ARC4.pyd` 都是按平台编译的二进制；而且 macOS 与 Linux 的 pycryptodome
 扩展**同名**（都叫 `_ARC4.abi3.so`），装不进同一个包。
 
 本机平台用已安装的依赖打包并实测；其它平台由脚本从 PyPI 下载对应 wheel 组装，
 **只做了结构校验**（确认原生库文件名、架构目录正确），没有真机运行过。
-脚本会打印每个产物是「本机实测」还是「仅结构校验」，别把后者当已验证。
+构建日志会标注每个产物的验证级别（本机实测 / 仅结构校验），后者不应视为已验证。
 
-交叉打包踩过的一个坑：macOS Intel 必须写 `macosx_10_13_x86_64`（wasmtime 提供的最低版本）。
-写成 `macosx_10_9_x86_64` 会让 pip 匹配不上，退回到一个「标着 `any` 却只含 Windows DLL」的
-废包，打出来的产物在 Mac 上必然启动失败——所以脚本里有原生库存在性校验，缺了直接报错。
+交叉打包的已知限制：macOS Intel 必须使用 `macosx_10_13_x86_64`（wasmtime 提供的最低版本）。
+写成 `macosx_10_9_x86_64` 时 pip 无法匹配，会回退到标记为 `any` 但仅含 Windows DLL 的无效包，
+产物在 Mac 上必然启动失败。脚本因此内置原生库存在性校验，缺失时直接报错终止。
 
 ### 免依赖可执行程序
 
@@ -252,12 +340,12 @@ python tools/build_exe.py     # 输出 dist/xm-decrypt
 ./xm-decrypt                  # 直接运行，不需要 Python 环境
 ```
 
-用 PyInstaller onefile 打包，自带解释器、`wasmtime` 原生库和 Textual，拷到任何同架构 Linux 上都能跑。两个必须显式处理的点：
+使用 PyInstaller onefile 打包，内置解释器、`wasmtime` 原生库与 Textual，可在同架构 Linux 上直接运行。构建时需显式处理两点：
 
-- `wasmtime` 的原生库 `_libwasmtime.so` 是运行时用 `ctypes` 按路径加载的，PyInstaller 的 `--collect-all` **不会**把它收进归档，必须 `--add-binary` 显式指定。漏了会在启动时报 `cannot open shared object file`。
+- `wasmtime` 的原生库 `_libwasmtime.so` 是运行时用 `ctypes` 按路径加载的，PyInstaller 的 `--collect-all` **不会**把它收进归档，必须 `--add-binary` 显式指定。遗漏时启动阶段会报 `cannot open shared object file`。
 - 冻结后多进程 spawn 会重新执行自身，入口处必须调用 `multiprocessing.freeze_support()`（非冻结环境是空操作）。
 
-脚本末尾会自动跑一次 `--cli -h` 自检，确认依赖真的在包里。
+脚本结束前会自动执行一次 `--cli -h` 自检，确认依赖已打入归档。
 
 ## 注意事项
 请确保你拥有合法的 xm 文件下载和转换权限。

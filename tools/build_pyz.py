@@ -193,6 +193,30 @@ def build(
     return target
 
 
+def update_sums(version: str, entries: dict[str, str]) -> Path:
+    """把 `{文件名: sha256}` 写进 dist/SHA256SUMS-<版本>.txt，与已有条目合并。
+
+    发布物由两个脚本产出（`.pyz` 归 build_release，`.tar.gz`/`.zip` 归 build_archives），
+    直接覆盖整份清单会互相踩。这里保留 `dist/` 里仍然存在的旧条目，只覆盖本次产出的文件，
+    所以两个脚本可以任意顺序重复跑，单独重建某个平台（`--only`）也不会抹掉其它平台的记录。
+    产物被删掉后，对应条目在下次写入时自动消失。
+    """
+    path = DIST / f"SHA256SUMS-{version}.txt"
+    merged: dict[str, str] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) != 2:
+                continue
+            name = parts[1]
+            if not (DIST / name).is_file():
+                continue
+            merged[name] = parts[0]
+    merged.update(entries)
+    path.write_text("".join(f"{merged[name]}  {name}\n" for name in sorted(merged)), encoding="utf-8")
+    return path
+
+
 def report(target: Path, with_deps: bool) -> int:
     data = target.read_bytes()
     print(f"产物：{target.relative_to(ROOT)}")

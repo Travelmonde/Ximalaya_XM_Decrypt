@@ -6,12 +6,20 @@
     （`_ARC4.abi3.so`），装不进同一个包。所以每个平台一份。
 
 命名规范（沿用 wheel 的 tag 风格）：
-    xm-decrypt-0.1.0-py3-none-any.pyz                 纯 Python，需目标机装依赖
-    xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz        内嵌依赖
-    xm-decrypt-0.1.0-py3-none-linux_aarch64.pyz
-    xm-decrypt-0.1.0-py3-none-win_amd64.pyz
-    xm-decrypt-0.1.0-py3-none-macosx_11_0_arm64.pyz
-    xm-decrypt-0.1.0-py3-none-macosx_10_13_x86_64.pyz
+    xm-decrypt-0.1.0-py310-none-any.pyz                 纯 Python，需目标机装依赖
+    xm-decrypt-0.1.0-py310-none-linux_x86_64.pyz        内嵌依赖
+    xm-decrypt-0.1.0-py310-none-linux_aarch64.pyz
+    xm-decrypt-0.1.0-py310-none-win_amd64.pyz
+    xm-decrypt-0.1.0-py310-none-macosx_11_0_arm64.pyz
+    xm-decrypt-0.1.0-py310-none-macosx_10_13_x86_64.pyz
+
+`py310` 是**实际能跑的最低 Python 版本**（3.10），不是随便写的：
+    1. 源码用了 `zip(..., strict=)`，3.10 才加入；
+    2. 内嵌的 mutagen 1.48 在 METADATA 里写着 `Requires-Python >=3.10`；
+    3. pycryptodome 的 wheel 是 `cp39-abi3`（>=3.9 都行），wasmtime / textual 只要求 >=3.9，
+       都不构成更高门槛。
+.pyz 是纯源码 zip，**没有 pyc 也没有元数据**，pip 读不到 Requires-Python，
+所以版本要求只能靠文件名 + README 传达。
 
 本机平台的包用已安装的依赖打包，可以实测；其它平台的包从 PyPI 拉对应 wheel 组装，
 **只做了结构校验，没有在真机上运行过**（脚本会明确标出）。
@@ -36,7 +44,12 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_pyz import DIST, ROOT, _staging_root, build  # noqa: E402
+from build_pyz import DIST, ROOT, _staging_root, build, update_sums  # noqa: E402
+
+# 产物文件名里的 Python tag，含义见模块 docstring。
+PYTHON_TAG = "py310"
+# 跨平台下载 wheel 时按这个版本挑（abi3 wheel 向下兼容，选 3.10 不会挡住高版本）。
+PIP_PYTHON_VERSION = "3.10"
 
 # 内嵌依赖：运行时必需的顶层模块。交叉打包时逐个下载对应平台的 wheel。
 VENDOR_DISTS = (
@@ -97,7 +110,7 @@ def download_wheels(platform_tag: str, dest: Path) -> list[Path]:
     """下载目标平台的全部依赖 wheel（只取二进制，不装）。"""
     dest.mkdir(parents=True, exist_ok=True)
     pip = [sys.executable, "-m", "pip", "download", "--no-deps", "--only-binary=:all:", "-d", str(dest)]
-    common = ["--platform", platform_tag, "--python-version", "3.12"]
+    common = ["--platform", platform_tag, "--python-version", PIP_PYTHON_VERSION]
     wheels: list[Path] = []
     for dist in VENDOR_DISTS:
         result = subprocess.run([*pip, *common, dist], capture_output=True, text=True)
@@ -154,14 +167,14 @@ def main() -> int:
     built: list[tuple[str, Path, str, bool]] = []  # (tag, path, sha256, tested)
 
     # 1) 纯 Python 版：与平台无关，目标机需自行安装依赖
-    any_target = DIST / f"xm-decrypt-{ver}-py3-none-any.pyz"
+    any_target = DIST / f"xm-decrypt-{ver}-{PYTHON_TAG}-none-any.pyz"
     build(target=any_target, with_deps=False)
     built.append(("any", any_target, hashlib.sha256(any_target.read_bytes()).hexdigest(), True))
     print("  ✓ any（纯 Python，需目标机装依赖）")
 
     # 2) 各平台内嵌依赖版
     for tag, pip_platform in selected:
-        out = DIST / f"xm-decrypt-{ver}-py3-none-{tag}.pyz"
+        out = DIST / f"xm-decrypt-{ver}-{PYTHON_TAG}-none-{tag}.pyz"
         is_native = tag == native
         if not is_native and args.skip_cross:
             print(f"  - {tag} 跳过（要求 --skip-cross）")
@@ -193,9 +206,7 @@ def main() -> int:
         print(f"  ✓ {tag}  {out.stat().st_size / 1024 / 1024:.1f} MB")
 
     # 3) 校验和清单（release 页面上的附通常配这个）
-    sums = DIST / f"SHA256SUMS-{ver}.txt"
-    lines = [f"{sha}  {path.name}" for _, path, sha, _ in built]
-    sums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    sums = update_sums(ver, {path.name: sha for _, path, sha, _ in built})
 
     print()
     print(f"{'平台':22s} {'大小':>10s}  {'sha256':18s} 验证")
