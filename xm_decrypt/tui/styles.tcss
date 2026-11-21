@@ -1,0 +1,426 @@
+/* XM 解密工具 —— Turbo Vision 风格样式
+ *
+ * 设计约束（对照参考界面）：
+ *   1. 黑底、单线框、直角；框标题嵌在顶边框左侧，黄色。
+ *   2. 只有黄/白/灰/青四种色相，靠亮度区分层级，不用大面积色块。
+ *   3. 当前项用黄色 + `>>` 前缀表达，不用高亮背景条。
+ *   4. 一屏之内：顶部标题行、常驻提示条、功能区、状态区、日志区。
+ */
+
+$bg: #000000;
+$fg: #c8c8c8;
+$dim: #7a7a7a;
+$line: #5f9f9f;
+$accent: #ffff00;
+$ok: #00d75f;
+$err: #ff5f5f;
+
+Screen {
+    background: $bg;
+    color: $fg;
+    overflow: hidden;
+}
+
+/* ---------------- 顶部标题行 ---------------- */
+#titlebar {
+    height: 1;
+    background: $bg;
+    color: $fg;
+}
+
+#app-title {
+    width: 1fr;
+    color: #ffffff;
+    text-style: bold;
+}
+
+#app-host {
+    width: auto;
+    color: $dim;
+}
+
+/* 常驻提示条：黄底黑字，对应参考界面第二行 */
+#hintbar {
+    height: 1;
+    background: $accent;
+    color: #000000;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* ---------------- 通用分区块 ---------------- */
+.panel {
+    background: $bg;
+    border: solid $line;
+    border-title-align: left;
+    border-title-color: $accent;
+    padding: 0 1;
+}
+
+/* 上面两块按内容撑开，剩下的空间全给日志，避免设置框里堆一片空地 */
+#body {
+    height: auto;
+}
+
+#menu-box {
+    width: 36;
+    height: 6;
+    margin-right: 1;
+}
+
+#info-box {
+    width: 1fr;
+    height: auto;
+}
+
+#status-box {
+    height: 4;
+}
+
+#log-box {
+    height: 1fr;
+    min-height: 5;
+}
+
+#summary {
+    height: auto;
+    padding: 0;
+}
+
+#status {
+    height: auto;
+}
+
+/* 主界面的状态框内容铺满，运行页的状态行保持一行 */
+#status-box > #status {
+    height: 1fr;
+}
+
+/* ---------------- 键盘菜单 ---------------- */
+ListView {
+    background: $bg;
+    border: none;
+    padding: 0;
+}
+
+ListView > ListItem {
+    background: $bg;
+    color: $fg;
+    padding: 0;
+    height: 1;
+}
+
+/* 鼠标悬停：背景抬一档 + 白字，给鼠标用户一个落点反馈（操作菜单与文件列表共用）。
+ * 伪类是 :hover；Textual 没有 -hovered 这个类名，写了也不会生效。 */
+ListView > ListItem:hover {
+    background: #1c1c1c;
+    color: #ffffff;
+}
+
+ListView > ListItem.-highlight {
+    background: $bg;
+    color: $dim;
+    text-style: none;
+}
+
+ListView:focus > ListItem.-highlight {
+    background: $bg;
+    color: $accent;
+    text-style: bold;
+}
+
+/* 悬停与当前项重叠时仍以黄色为准，但保留背景变化 */
+ListView > ListItem.-highlight:hover {
+    background: #1c1c1c;
+    color: $dim;
+    text-style: none;
+}
+
+ListView:focus > ListItem.-highlight:hover {
+    background: #1c1c1c;
+    color: $accent;
+    text-style: bold;
+}
+
+/* 菜单整体不参与滚动，避免出现滚动条破坏画面 */
+#menu {
+    height: 1fr;
+    scrollbar-size: 0 0;
+}
+
+/* ---------------- 日志 ---------------- */
+RichLog {
+    border: none;
+    background: $bg;
+    color: $fg;
+    padding: 0;
+    height: 1fr;
+    scrollbar-size: 1 1;
+    scrollbar-color: $line;
+    scrollbar-background: $bg;
+}
+
+/* ---------------- 输入控件 ---------------- */
+Input {
+    height: 1;
+    border: none;
+    background: #161616;
+    color: $accent;
+    padding: 0 1;
+}
+
+Input:focus {
+    background: #262626;
+    color: #ffffff;
+}
+
+Input.-invalid {
+    background: #3a0000;
+    color: $err;
+}
+
+Button {
+    height: 1;
+    min-width: 0;
+    border: none;
+    background: $bg;
+    color: $fg;
+    padding: 0 1;
+    margin: 0 0 0 1;
+    text-style: none;
+}
+
+Button:hover {
+    color: $accent;
+}
+
+Button:focus {
+    background: $accent;
+    color: #000000;
+    text-style: bold;
+}
+
+Button.-primary {
+    color: $accent;
+    text-style: bold;
+}
+
+Button.-primary:focus {
+    background: $accent;
+    color: #000000;
+}
+
+Button:disabled {
+    color: #4a4a4a;
+}
+
+Checkbox {
+    height: 1;
+    border: none;
+    background: $bg;
+    color: $fg;
+    padding: 0;
+    width: auto;
+}
+
+Checkbox:focus {
+    color: $accent;
+    background: $bg;
+}
+
+Checkbox > .toggle--button {
+    background: $bg;
+    color: $fg;
+}
+
+Checkbox:focus > .toggle--button {
+    background: $bg;
+    color: $accent;
+}
+
+Select {
+    height: 1;
+}
+
+Select > SelectCurrent {
+    height: 1;
+    border: none;
+    background: #161616;
+    color: $accent;
+    padding: 0 1;
+}
+
+Select:focus > SelectCurrent {
+    background: #262626;
+    color: #ffffff;
+}
+
+Select > SelectCurrent > Static#label {
+    color: $accent;
+}
+
+Select > SelectCurrent > .arrow {
+    color: $accent;
+    padding: 0;
+}
+
+Label {
+    height: 1;
+    color: $fg;
+}
+
+/* ---------------- 弹窗 ---------------- */
+FilePicker, PlanScreen, DirPlanScreen, SettingsScreen, RunScreen {
+    align: center middle;
+    background: $bg 75%;
+}
+
+.dialog {
+    width: 94%;
+    max-width: 120;
+    height: 90%;
+    max-height: 100%;
+    background: $bg;
+    border: solid $line;
+    border-title-align: left;
+    border-title-color: $accent;
+    padding: 0 1;
+}
+
+.dialog-small {
+    width: 82%;
+    max-width: 96;
+    height: auto;
+    max-height: 92%;
+    background: $bg;
+    border: solid $line;
+    border-title-align: left;
+    border-title-color: $accent;
+    padding: 0 1;
+}
+
+/* 弹窗内的提示文字与错误行 */
+.muted {
+    color: $dim;
+    height: auto;
+}
+
+.error {
+    color: $err;
+    height: auto;
+}
+
+.field-row {
+    height: 1;
+    margin-bottom: 0;
+}
+
+.field-row Label {
+    width: 16;
+    color: $dim;
+    padding: 0;
+}
+
+.field-row Input {
+    width: 1fr;
+}
+
+.field-row Select {
+    width: 1fr;
+}
+
+/* 底部操作行：一条分隔线 + 右对齐按钮，不用重背景 */
+.dialog-buttons {
+    height: auto;
+    align-horizontal: right;
+    border-top: solid $line;
+    padding-top: 0;
+    margin-top: 1;
+}
+
+/* ---------------- 文件选择器 ---------------- */
+#entries {
+    height: 1fr;
+    border: solid $line;
+    background: $bg;
+}
+
+#cwd-line {
+    height: 1;
+    margin-bottom: 1;
+}
+
+#hint {
+    height: auto;
+    color: $dim;
+    margin-top: 1;
+}
+
+/* ---------------- 命名确认 ---------------- */
+#rows {
+    height: 1fr;
+    border: solid $line;
+    padding: 0 1;
+}
+
+.row {
+    height: 1;
+    margin-bottom: 1;
+}
+
+.row .fname {
+    width: 42%;
+    color: $dim;
+    text-overflow: ellipsis;
+}
+
+.row Input {
+    width: 1fr;
+}
+
+/* ---------------- 运行界面 ---------------- */
+#bar {
+    height: 1;
+    margin: 0 0 1 0;
+}
+
+ProgressBar {
+    height: 1;
+    width: 1fr;
+}
+
+ProgressBar > Bar {
+    height: 1;
+    width: 1fr;
+    background: #1c1c1c;
+}
+
+ProgressBar > Bar > .bar--bar {
+    color: $accent;
+    background: #1c1c1c;
+}
+
+ProgressBar > Bar > .bar--complete {
+    color: $ok;
+    background: #1c1c1c;
+}
+
+/* 进度条右侧的百分比和剩余时间在窄屏里很吵，状态行已经写了数量 */
+ProgressBar > PercentageStatus {
+    display: none;
+}
+
+ProgressBar > ETAStatus {
+    display: none;
+}
+
+#log {
+    height: 1fr;
+    border: none;
+}
+
+/* 运行页把日志和上面的进度区隔开 */
+#run-dialog #log {
+    border-top: solid $line;
+    margin-top: 1;
+}

@@ -1,321 +1,90 @@
-import base64
-import io
+"""喜马拉雅 XM 解密工具 —— 统一入口。
+
+    python main.py               启动终端界面（TUI）
+    python main.py --cli -h      命令行模式（适合脚本 / 无交互终端）
+    python main.py --cli -d ~/xm -o ~/out -j 4 -r
+"""
+
+from __future__ import annotations
+
+import importlib.util
 import sys
-import os
-import glob
-import pathlib
-import struct
-import subprocess
-import mutagen
-import tkinter as tk
-from tkinter import filedialog
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-from mutagen.id3 import TALB, TIT2, TPE1, TRCK
-from mutagen.easyid3 import ID3
-from mutagen.wave import WAVE
-import wasmtime
+
+CLI_FLAGS = ("--cli", "-cli")
+
+# .pyz 是「把代码打进一个 zip」的 zipapp，不含第三方依赖：
+# wasmtime / pycryptodome 都是带 .so 的原生扩展，无法从 zip 里 import。
+# 所以启动前先检查，缺了就给人话提示，而不是抛 ModuleNotFoundError 堆栈。
+CORE_DEPS = (("Crypto", "pycryptodome"), ("mutagen", "mutagen"), ("wasmtime", "wasmtime"))
+TUI_DEPS = (("textual", "textual"),)
+
+HELP = """喜马拉雅 XM 解密工具
+
+用法：
+  python main.py                启动终端界面（TUI）
+  python main.py --cli [参数]   命令行模式
+
+命令行常用参数：
+  -f/--file    指定 .xm 文件（可重复）
+  -d/--dir     指定输入目录
+  -r           扫描目录时包含子目录
+  -o/--out     输出目录
+  -j/--jobs    并行进程数
+  --wav        keep / alac
+  --name       与 -f 一一对应的自定义名称
+
+完整参数：python main.py --cli -h
+"""
 
 
-_WASM_RUNTIME = None
+def _missing(deps) -> list[tuple[str, str]]:
+    """返回缺失的依赖：(import 名, pip 包名)。"""
+    return [(mod, dist) for mod, dist in deps if importlib.util.find_spec(mod) is None]
 
 
-class XMInfo:
-    def __init__(self):
-        self.title = ""
-        self.artist = ""
-        self.album = ""
-        self.tracknumber = 0
-        self.size = 0
-        self.header_size = 0
-        self.ISRC = ""
-        self.encodedby = ""
-        self.encoding_technology = ""
-
-    def iv(self):
-        if self.ISRC != "":
-            return bytes.fromhex(self.ISRC)
-        return bytes.fromhex(self.encodedby)
+def _report_missing(missing: list[tuple[str, str]]) -> int:
+    packages = " ".join(dist for _, dist in missing)
+    print("缺少依赖：" + "、".join(dist for _, dist in missing), file=sys.stderr)
+    print(f"当前解释器：{sys.executable}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("安装后重试：", file=sys.stderr)
+    print(f"  {sys.executable} -m pip install {packages}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("或用项目虚拟环境运行（推荐）：", file=sys.stderr)
+    print("  python -m venv .venv", file=sys.stderr)
+    print("  .venv/bin/pip install -r requirements.txt", file=sys.stderr)
+    return 1
 
 
-def get_str(x):
-    if x is None:
-        return ""
-    return x
+def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    wants_cli = any(flag in args for flag in CLI_FLAGS)
 
+    # 依赖检查放在最前：xm_decrypt 在 import 期就会拉起 Crypto 等原生扩展。
+    missing = _missing(CORE_DEPS + (() if wants_cli else TUI_DEPS))
+    if missing:
+        return _report_missing(missing)
 
-def read_file(x):
-    with open(x, "rb") as f:
-        return f.read()
+    # 延迟导入：TUI 会拉起 textual，而 --cli 与多进程子进程都不需要它。
+    if wants_cli:
+        from xm_decrypt.cli import main as cli_main
 
+        return cli_main([arg for arg in args if arg not in CLI_FLAGS])
 
-# return number of id3 bytes
-def get_xm_info(data: bytes):
-    # print(EasyID3(io.BytesIO(data)))
-    id3 = ID3(io.BytesIO(data), v2_version=3)
-    id3value = XMInfo()
-    id3value.title = str(id3["TIT2"])
-    id3value.album = str(id3["TALB"])
-    id3value.artist = str(id3["TPE1"])
-    id3value.tracknumber = int(str(id3["TRCK"]))
-    id3value.ISRC = "" if id3.get("TSRC") is None else str(id3["TSRC"])
-    id3value.encodedby = "" if id3.get("TENC") is None else str(id3["TENC"])
-    id3value.size = int(str(id3["TSIZ"]))
-    id3value.header_size = id3.size
-    id3value.encoding_technology = str(id3["TSSE"])
-    return id3value
+    if args and args[0] in ("-h", "--help", "help"):
+        print(HELP)
+        return 0
 
+    from xm_decrypt.tui import run_tui
 
-def get_printable_count(x: bytes):
-    i = 0
-    for i, c in enumerate(x):
-        # all pritable
-        if c < 0x20 or c > 0x7e:
-            return i
-    return len(x)
-
-
-def get_printable_bytes(x: bytes):
-    return x[:get_printable_count(x)]
-
-
-def get_wasm_runtime():
-    global _WASM_RUNTIME
-    if _WASM_RUNTIME is not None:
-        return _WASM_RUNTIME
-
-    engine = wasmtime.Engine()
-    store = wasmtime.Store(engine)
-    wasm_path = pathlib.Path(__file__).with_name("xm_encryptor.wasm")
-    module = wasmtime.Module.from_file(engine, str(wasm_path))
-    instance = wasmtime.Instance(store, module, [])
-    exports = instance.exports(store)
-
-    _WASM_RUNTIME = {
-        "store": store,
-        "a": exports["a"],
-        "c": exports["c"],
-        "g": exports["g"],
-        "i": exports["i"],
-    }
-    return _WASM_RUNTIME
-
-
-def xm_decrypt(raw_data):
-    wasm_runtime = get_wasm_runtime()
-    store = wasm_runtime["store"]
-
-    # decode id3
-    xm_info = get_xm_info(raw_data)
-    # print("id3 header size: ", hex(xm_info.header_size))
-    encrypted_data = raw_data[xm_info.header_size:xm_info.header_size + xm_info.size:]
-
-    # Stage 1 aes-256-cbc
-    xm_key = b"ximalayaximalayaximalayaximalaya"
-    # print(f"decrypt stage 1 (aes-256-cbc):\n"
-    #       f"    data length = {len(encrypted_data)},\n"
-    #       f"    key = {xm_key},\n"
-    #       f"    iv = {xm_info.iv().hex()}")
-    cipher = AES.new(xm_key, AES.MODE_CBC, xm_info.iv())
-    de_data = cipher.decrypt(pad(encrypted_data, 16))
-    # print("success")
-    # Stage 2 xmDecrypt (wasm)
-    de_data = get_printable_bytes(de_data)
-    track_id = str(xm_info.tracknumber).encode()
-    stack_pointer = wasm_runtime["a"](store, -16)
-    de_data_offset = wasm_runtime["c"](store, len(de_data))
-    track_id_offset = wasm_runtime["c"](store, len(track_id))
-    memory = wasm_runtime["i"]
-
-    memory.write(store, de_data, start=de_data_offset)
-    memory.write(store, track_id, start=track_id_offset)
-    wasm_runtime["g"](store, stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
-
-    result_meta = bytes(memory.read(store, stack_pointer, stack_pointer + 16))
-    result_pointer, result_length, status_code, extra_code = struct.unpack("<4i", result_meta)
-    if status_code != 0 or extra_code != 0:
-        raise RuntimeError(f"wasm decrypt failed: status={status_code}, extra={extra_code}")
-    result_data = bytes(memory.read(store, result_pointer, result_pointer + result_length)).decode()
-    # Stage 3 combine
-    # print(f"Stage 3 (base64)")
-    decrypted_data = base64.b64decode(xm_info.encoding_technology + result_data)
-    final_data = decrypted_data + raw_data[xm_info.header_size + xm_info.size::]
-    # print("success")
-    return xm_info, final_data
-
-
-def find_ext(data):
-    if len(data) >= 8 and data[4:8] == b'ftyp':
-        return "m4a"
-    if data[:2] in [b'\xff\xf1', b'\xff\xf9']:
-        return "aac"
-    if data[:3] == b'ID3':
-        return "mp3"
-    if data[:4] == b'fLaC':
-        return "flac"
-    if data[:4] == b'RIFF':
-        return "wav"
-    return "aac"
-
-
-def get_xm_track_id(from_file):
-    id3 = ID3(from_file, v2_version=3)
-    trck = str(id3["TRCK"])
-    return int(trck.split("/")[0])
-
-
-def sort_files_by_track_id(files_to_decrypt):
-    def sort_key(path):
-        try:
-            return (get_xm_track_id(path), path)
-        except Exception:
-            # Keep undecodable files at the end but deterministic by path.
-            return (sys.maxsize, path)
-
-    return sorted(files_to_decrypt, key=sort_key)
-
-
-def transcode_wav_to_alac(file_path):
-    output_path = os.path.splitext(file_path)[0] + ".m4a"
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            file_path,
-            "-map_metadata",
-            "0",
-            "-c:a",
-            "alac",
-            output_path,
-        ]
-    )
-    if result.returncode != 0:
-        raise RuntimeError("ffmpeg 封装 ALAC 失败，请检查 ffmpeg 是否可用")
-    os.remove(file_path)
-    return output_path
-
-
-def decrypt_xm_file(from_file, output_path='./output', track_no=None, track_total=None, wav_mode="keep"):
-    print(f"正在解密{from_file}")
-    data = read_file(from_file)
-    info, audio_data = xm_decrypt(data)
-    ext = find_ext(audio_data[:0xff])
-    safe_title = replace_invalid_chars(info.title)
-    if track_no is not None and track_total is not None:
-        width = len(str(track_total))
-        safe_title = f"{track_no:0{width}d} - {safe_title}"
-    output = f"{output_path}/{replace_invalid_chars(info.album)}/{safe_title}.{ext}"
-    if not os.path.exists(f"{output_path}/{replace_invalid_chars(info.album)}"):
-        os.makedirs(f"{output_path}/{replace_invalid_chars(info.album)}")
-    with open(output, "wb") as f:
-        f.write(audio_data)
-
-    # Best-effort metadata writing: do not fail decryption when tagging is unsupported.
-    try:
-        if ext in ["mp3", "flac", "m4a"]:
-            tags = mutagen.File(output, easy=True)
-            if tags is not None:
-                tags["title"] = [info.title]
-                tags["album"] = [info.album]
-                tags["artist"] = [info.artist]
-                if track_no is not None and track_total is not None:
-                    tags["tracknumber"] = [f"{track_no}/{track_total}"]
-                tags.save()
-        elif ext == "wav":
-            wave_file = WAVE(output)
-            if wave_file.tags is None:
-                wave_file.add_tags()
-            wave_file.tags.add(TIT2(encoding=3, text=[info.title]))
-            wave_file.tags.add(TALB(encoding=3, text=[info.album]))
-            wave_file.tags.add(TPE1(encoding=3, text=[info.artist]))
-            if track_no is not None and track_total is not None:
-                wave_file.tags.add(TRCK(encoding=3, text=[f"{track_no}/{track_total}"]))
-            wave_file.save()
-            if wav_mode == "alac":
-                output = transcode_wav_to_alac(output)
-                ext = "m4a"
-    except Exception as e:
-        print(f"写入标签失败，已跳过：{e}")
-
-    print(f"解密成功，文件保存至{output}！")
-
-
-def replace_invalid_chars(name):
-    invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
-    for char in invalid_chars:
-        if char in name:
-            name = name.replace(char, " ")
-    return name
-
-
-def select_file():
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename()
-    root.destroy()
-    return file_path
-
-
-def select_directory():
-    root = tk.Tk()
-    root.withdraw()
-    directory_path = filedialog.askdirectory()
-    root.destroy()
-    return directory_path
+    return run_tui()
 
 
 if __name__ == "__main__":
-    while True:
-        print("欢迎使用喜马拉雅音频解密工具")
-        print("本工具仅供学习交流使用，严禁用于商业用途")
-        print("请选择您想要使用的功能：")
-        print("1. 解密单个文件")
-        print("2. 批量解密文件")
-        print("3. 退出")
-        choice = input()
-        if choice == "1" or choice == "2":
-            if choice == "1":
-                files_to_decrypt = [select_file()]
-                if files_to_decrypt == [""]:
-                    print("检测到文件选择窗口被关闭")
-                    continue
-            elif choice == "2":
-                dir_to_decrypt = select_directory()
-                if dir_to_decrypt == "":
-                    print("检测到目录选择窗口被关闭")
-                    continue
-                files_to_decrypt = glob.glob(os.path.join(dir_to_decrypt, "*.xm"))
-            files_to_decrypt = sort_files_by_track_id(files_to_decrypt)
-            track_total = len(files_to_decrypt)
-            print("请选择是否需要设置输出路径：（不设置默认为本程序目录下的output文件夹）")
-            print("1. 设置输出路径")
-            print("2. 不设置输出路径")
-            choice = input()
-            if choice == "1":
-                output_path = select_directory()
-                if output_path == "":
-                    print("检测到目录选择窗口被关闭")
-                    continue
-            elif choice == "2":
-                output_path = "./output"
-            print("如果解密结果中包含 WAV，请选择处理方式：")
-            print("1. 保留 WAV")
-            print("2. 封装为 ALAC (.m4a) 并保留 metadata")
-            wav_choice = input()
-            if wav_choice == "1":
-                wav_mode = "keep"
-            elif wav_choice == "2":
-                wav_mode = "alac"
-            else:
-                print("输入错误，请重新输入！")
-                continue
-            for i, file in enumerate(files_to_decrypt, start=1):
-                decrypt_xm_file(file, output_path, i, track_total, wav_mode)
-        elif choice == "3":
-            sys.exit()
-        else:
-            print("输入错误，请重新输入！")
+    # 冻结成单文件可执行程序（PyInstaller）时，spawn 子进程会重新执行本程序，
+    # 必须由 freeze_support() 先接管，否则多进程解密会无限拉起自己。
+    # 非冻结环境下这是空操作。
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+    sys.exit(main())

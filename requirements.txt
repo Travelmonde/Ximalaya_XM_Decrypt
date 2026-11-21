@@ -1,3 +1,7 @@
-mutagen
-pycryptodome
-wasmtime
+# 运行环境：Python >= 3.9（已在 3.12 / 3.13 上验证通过）
+# 下面是最小可用版本，安装时取满足条件的最高版本即可
+mutagen>=1.46
+pycryptodome>=3.15
+wasmtime>=14
+# TUI（终端界面）
+textual>=1.0

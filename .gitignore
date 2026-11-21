@@ -163,6 +163,16 @@ cython_debug/
 
 # test xm file
 test.xm
+# 样本音频（版权内容，不入库；需要时用 git add -f 强制添加）
+*.xm
+
+# 打包产物
+*.pyz
+
+# 本地工作目录：记忆（含本机绝对路径与个人偏好）、临时文件、构建产物，一律不入库
+.workbuddy/
+# 该挂载点删除文件会落到这里，属系统行为，不应入库
+.Trash-0/
 
 # output path
 output/
