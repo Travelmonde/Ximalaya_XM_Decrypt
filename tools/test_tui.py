@@ -1,7 +1,7 @@
 """TUI 无头回归测试：用 Textual 的 pilot 驱动真实界面完成一次解密。
 
 用法（项目根目录）：
-    python .workbuddy/scripts/test_tui.py
+    python tools/test_tui.py
 
 覆盖：
   1. 主界面渲染
@@ -18,7 +18,7 @@ import shutil
 import sys
 import tempfile
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 TMP_ROOT = PROJECT_ROOT / ".workbuddy" / "tmp"

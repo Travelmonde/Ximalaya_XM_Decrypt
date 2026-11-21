@@ -2,7 +2,7 @@
 
 用法（在项目根目录执行）：
     /home/tally/.workbuddy/binaries/python/envs/default/bin/python \
-        .workbuddy/scripts/verify_baseline.py
+        tools/verify_baseline.py
 
 它会：
 1. 遍历目录下所有 .xm，走完整解密流程（不写盘），检查能否产出音频；
@@ -21,7 +21,7 @@ import shutil
 import sys
 import tempfile
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 BASELINE = {

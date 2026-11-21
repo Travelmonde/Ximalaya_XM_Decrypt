@@ -6,7 +6,7 @@
     xm_encryptor.wasm      ← wasm 必须进归档，见 wasm.py:wasm_bytes()
 
 用法：
-    python .workbuddy/scripts/build_pyz.py            # 输出 dist/xm-decrypt.pyz
+    python tools/build_pyz.py            # 输出 dist/xm-decrypt.pyz
     python dist/xm-decrypt.pyz --cli -h               # 运行（需已装依赖）
 """
 
@@ -19,7 +19,7 @@ import tempfile
 import zipapp
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 TARGET = DIST / "xm-decrypt.pyz"
 WASM = "xm_encryptor.wasm"

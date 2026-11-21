@@ -13,13 +13,31 @@
 - **格式支持**：mp3、aac、flac、m4a、wav；wav 可选转为 ALAC 无损 `.m4a` 以减小体积
 
 ## 安装
+
+有两种用法，按需选择：
+
+**A. 直接跑单文件可执行程序（免安装 Python 依赖）**
+
+从 Release 下载 `xm-decrypt`（Linux x86-64），加执行权限后直接运行：
+
 ```bash
-git clone https://github.com/Travelmonde/Ximalaya_XM_Decrypt.git
-cd Ximalaya_XM_Decrypt
+chmod +x xm-decrypt
+./xm-decrypt            # 终端界面
+./xm-decrypt --cli -h   # 命令行
+```
+
+**B. 从源码运行**
+
+```bash
+git clone https://github.com/taally666/Ximalaya_XM_Decrypt_TUI.git
+cd Ximalaya_XM_Decrypt_TUI
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
 > 需要 Python 3.9 及以上（已在 3.12 / 3.13 上验证）。仅在把 wav 转成 ALAC 时需要系统里有 `ffmpeg`。
+
+启动时会先检查依赖，缺哪一个会直接提示对应的 `pip install` 命令，不会抛一堆堆栈。
 
 ## 使用
 ```bash
@@ -85,6 +103,11 @@ python main.py --cli --settings                          # 打印当前设置
 ├── main.py                  统一入口：默认启动 TUI，--cli 走命令行
 ├── xm_encryptor.wasm        wasm 解密模块（必需）
 ├── requirements.txt
+├── tools/                   开发与发布脚本（不参与运行）
+│   ├── build_pyz.py         打包成单文件 .pyz
+│   ├── build_exe.py         打包成免依赖可执行程序
+│   ├── verify_baseline.py   解密产物哈希回归
+│   └── test_tui.py          界面端到端测试（Textual pilot）
 └── xm_decrypt/              核心库
     ├── metadata.py          读 ID3 元信息、扫描与排序（不解密，开销极低）
     ├── wasm.py              wasm 实例化、内存读写、地址空间受限时的降级
@@ -102,25 +125,52 @@ python main.py --cli --settings                          # 打印当前设置
 
 分层原则：`metadata` 只读文件头，`decryptor` 只算字节，`exporter` 只负责落盘，`batch` 只负责调度，界面层不碰解密细节。要在其他脚本里复用，直接 `from xm_decrypt import decrypt_xm_to` 即可。
 
-## 打包成单文件 .pyz
+仓库只包含运行代码与 `tools/` 脚本。开发过程中的本地笔记、构建中间产物放在 `.workbuddy/`，已在 `.gitignore` 中排除，不会提交。
 
-```
-python .workbuddy/scripts/build_pyz.py
+## 打包与分发
+
+两种产物各有取舍：
+
+| | `.pyz` | 可执行程序 |
+| --- | --- | --- |
+| 体积 | 约 53 KB | 约 100 MB |
+| 构建工具 | 标准库 `zipapp` | PyInstaller |
+| 运行前提 | 目标机器已装好依赖 | 无，自带解释器和原生库 |
+| 适用 | 自己有 Python 环境 / 内部分发 | 给不想装环境的人 |
+
+### 单文件 .pyz
+
+```bash
+python tools/build_pyz.py
 ```
 
-产物为 `dist/xm-decrypt.pyz`（约 52 KB，标准库 zipapp，无需额外打包工具）。它把 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm` 全部封进一个压缩归档，分发时只需要这一个文件：
+产物 `dist/xm-decrypt.pyz`，把 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm` 全部封进一个压缩归档：
 
-```
+```bash
 python xm-decrypt.pyz              # TUI
 python xm-decrypt.pyz --cli -h     # 命令行
 ```
 
-两点实现细节（改代码时别踩）：
+**它不含第三方依赖**——zipapp 只是把代码打成一个 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的原生扩展，无法从 zip 里 import。所以换机器跑之前仍要 `pip install -r requirements.txt`，缺依赖时程序会提示装哪些包。
+
+两个实现细节（改代码时别踩）：
 
 - **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。所以单独拷一个 `.pyz` 出去也能跑，不必附带 wasm。
-- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。已实测两种方式加载的样式规则数都是 135 条，外观一致。
+- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 135 条，外观一致。
 
-依赖（mutagen / pycryptodome / wasmtime / textual）仍需 `pip install -r requirements.txt`，zipapp 只打包本项目代码，不打包第三方库。
+### 免依赖可执行程序
+
+```bash
+python tools/build_exe.py     # 输出 dist/xm-decrypt
+./xm-decrypt                  # 直接运行，不需要 Python 环境
+```
+
+用 PyInstaller onefile 打包，自带解释器、`wasmtime` 原生库和 Textual，拷到任何同架构 Linux 上都能跑。两个必须显式处理的点：
+
+- `wasmtime` 的原生库 `_libwasmtime.so` 是运行时用 `ctypes` 按路径加载的，PyInstaller 的 `--collect-all` **不会**把它收进归档，必须 `--add-binary` 显式指定。漏了会在启动时报 `cannot open shared object file`。
+- 冻结后多进程 spawn 会重新执行自身，入口处必须调用 `multiprocessing.freeze_support()`（非冻结环境是空操作）。
+
+脚本末尾会自动跑一次 `--cli -h` 自检，确认依赖真的在包里。
 
 ## 注意事项
 请确保你拥有合法的 xm 文件下载和转换权限。
