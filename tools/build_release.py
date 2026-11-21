@@ -6,12 +6,12 @@
     （`_ARC4.abi3.so`），装不进同一个包。所以每个平台一份。
 
 命名规范（沿用 wheel 的 tag 风格）：
-    xm-decrypt-2.0.0-py3-none-any.pyz                 纯 Python，需目标机装依赖
-    xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz        内嵌依赖
-    xm-decrypt-2.0.0-py3-none-linux_aarch64.pyz
-    xm-decrypt-2.0.0-py3-none-win_amd64.pyz
-    xm-decrypt-2.0.0-py3-none-macosx_11_0_arm64.pyz
-    xm-decrypt-2.0.0-py3-none-macosx_10_13_x86_64.pyz
+    xm-decrypt-0.1.0-py3-none-any.pyz                 纯 Python，需目标机装依赖
+    xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz        内嵌依赖
+    xm-decrypt-0.1.0-py3-none-linux_aarch64.pyz
+    xm-decrypt-0.1.0-py3-none-win_amd64.pyz
+    xm-decrypt-0.1.0-py3-none-macosx_11_0_arm64.pyz
+    xm-decrypt-0.1.0-py3-none-macosx_10_13_x86_64.pyz
 
 本机平台的包用已安装的依赖打包，可以实测；其它平台的包从 PyPI 拉对应 wheel 组装，
 **只做了结构校验，没有在真机上运行过**（脚本会明确标出）。

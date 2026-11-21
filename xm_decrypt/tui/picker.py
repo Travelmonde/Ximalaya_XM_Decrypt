@@ -59,15 +59,14 @@ class FilePicker(ModalScreen):
 
     # ---------- 布局 ----------
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static(self.heading, classes="dialog-title")
+        with Vertical(classes="dialog", id="picker-dialog"):
             with Horizontal(classes="field-row"):
                 yield Label("路径")
                 yield Input(str(self.cwd), id="path-input")
                 yield Button("前往", id="go")
             yield Static("", id="cwd-line", classes="muted")
             yield ListView(id="entries")
-            yield Static(PICKER_HINT, id="hint")
+            yield Static("", id="hint")
             with Horizontal(classes="dialog-buttons"):
                 yield Button("全选", id="select-all")
                 yield Button("清空", id="clear")
@@ -75,6 +74,7 @@ class FilePicker(ModalScreen):
                 yield Button("确定", id="confirm", variant="primary")
 
     def on_mount(self) -> None:
+        self.query_one("#picker-dialog").border_title = self.heading
         self.refresh_entries()
 
     # ---------- 数据 ----------
@@ -97,37 +97,50 @@ class FilePicker(ModalScreen):
         self._entries = entries
         list_view = self.query_one("#entries", ListView)
         list_view.clear()
-        list_view.extend(ListItem(Label(self._label(kind, path))) for kind, path in entries)
+        list_view.extend(ListItem(Label(self._label(kind, path, False))) for kind, path in entries)
         if entries:
             list_view.index = 0
         list_view.focus()
 
         suffix = "" if files else "  [yellow]（该目录没有 .xm 文件）[/yellow]"
         self.query_one("#cwd-line", Static).update(
-            f"当前目录：[b]{escape(str(self.cwd))}[/b]{suffix}"
+            f"当前目录：{escape(str(self.cwd))}{suffix}"
         )
         self._refresh_hint()
+        # ListItem 里的 Label 要等下一帧才挂载完成，这里延后一帧再画箭头。
+        self.call_after_refresh(self._refresh_labels)
 
-    def _label(self, kind: str, path: Path) -> str:
+    def _label(self, kind: str, path: Path, current: bool) -> str:
+        prefix = ">> " if current else "   "
         if kind == "parent":
-            return "[dim].. 上级目录[/dim]"
+            return f"{prefix}[dim].. 上级目录[/dim]"
         if kind == "dir":
-            return f"[bold]▸[/bold] {escape(path.name)}/"
+            return f"{prefix}[bold]▸[/bold] {escape(path.name)}/"
         if self.pick_mode == "dirs":
-            return f"  [dim]{escape(path.name)}[/dim]"
-        mark = "[b][x][/b]" if str(path) in self.selected else "[ ]"
-        return f"{mark} {escape(path.name)}"
+            return f"{prefix}[dim]{escape(path.name)}[/dim]"
+        mark = "[bold][x][/bold]" if str(path) in self.selected else "[ ]"
+        return f"{prefix}{mark} {escape(path.name)}"
 
     def _refresh_hint(self) -> None:
-        self.query_one("#hint", Static).update(
-            f"{PICKER_HINT}\n已选中 [b]{len(self.selected)}[/b] 个文件"
-        )
+        if self.pick_mode == "dirs":
+            extra = "Enter 进入目录，Ctrl+S 选定当前目录，Esc 取消"
+        else:
+            extra = f"已选中 [b]{len(self.selected)}[/b] 个 .xm 文件"
+        self.query_one("#hint", Static).update(f"{PICKER_HINT}\n{extra}")
 
     def _refresh_labels(self) -> None:
         list_view = self.query_one("#entries", ListView)
-        for item, (kind, path) in zip(list_view.children, self._entries):
-            item.query_one(Label).update(self._label(kind, path))
+        current = list_view.index
+        for position, (item, (kind, path)) in enumerate(
+            zip(list_view.children, self._entries, strict=False)
+        ):
+            labels = item.query(Label)
+            if labels:
+                labels.first().update(self._label(kind, path, position == current))
         self._refresh_hint()
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        self._refresh_labels()
 
     # ---------- 交互 ----------
     def _goto(self, path: Path) -> None:

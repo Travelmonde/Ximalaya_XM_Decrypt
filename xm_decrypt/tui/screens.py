@@ -30,6 +30,7 @@ from ..batch import run_batch
 from ..exporter import replace_invalid_chars
 from ..metadata import read_xm_meta, scan_xm_files
 from .picker import FilePicker, expand_user
+from .widgets import BoxCheckbox
 from ..settings import Settings, default_process_count, settings_path
 
 WAV_OPTIONS = [("保留 WAV", "keep"), ("封装为 ALAC (.m4a)", "alac")]
@@ -51,7 +52,7 @@ class PlanScreen(ModalScreen):
 
         metas = [read_xm_meta(path) for path in self.files]
         self.defaults: list[str] = []
-        for index, (path, meta) in enumerate(zip(self.files, metas)):
+        for index, (path, meta) in enumerate(zip(self.files, metas, strict=True)):
             if meta is None or not meta.title:
                 self.defaults.append(replace_invalid_chars(Path(path).stem))
                 continue
@@ -65,14 +66,13 @@ class PlanScreen(ModalScreen):
                 self.defaults.append(title)
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static(f"确认输出与命名（共 {self.total} 个文件）", classes="dialog-title")
+        with Vertical(classes="dialog", id="plan-dialog"):
             with Horizontal(classes="field-row"):
                 yield Label("输出目录")
                 yield Input(self.settings.resolved_output_dir(), id="out-dir")
                 yield Button("浏览", id="browse-out")
-            yield Checkbox("按专辑名再建一层子目录", value=False, id="album-sub")
-            yield Static("下面可逐个修改文件名（不含扩展名，扩展名按解密结果自动补全）", classes="muted")
+            yield BoxCheckbox("按专辑名再建一层子目录", value=False, id="album-sub")
+            yield Static("可逐个修改文件名（不含扩展名，扩展名按解密结果补全）", classes="muted")
             with VerticalScroll(id="rows"):
                 for index, path in enumerate(self.files):
                     with Horizontal(classes="row"):
@@ -80,11 +80,12 @@ class PlanScreen(ModalScreen):
                         yield Input(self.defaults[index], id=f"name-{index}")
             yield Static("", id="error", classes="error")
             with Horizontal(classes="dialog-buttons"):
-                yield Button("恢复默认名称", id="reset")
+                yield Button("恢复默认", id="reset")
                 yield Button("取消", id="cancel")
                 yield Button("开始解密", id="start", variant="primary")
 
     def on_mount(self) -> None:
+        self.query_one("#plan-dialog").border_title = f"确认输出与命名（共 {self.total} 个文件）"
         self.query_one("#start", Button).focus()
 
     def _error(self, message: str) -> None:
@@ -164,15 +165,14 @@ class DirPlanScreen(ModalScreen):
         self.files: list[str] = []
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog-small"):
-            yield Static("确认目录解密参数", classes="dialog-title")
-            yield Static(f"目录：[b]{escape(self.directory)}[/b]", classes="muted")
+        with Vertical(classes="dialog-small", id="dir-dialog"):
+            yield Static(f"目录：{escape(self.directory)}", classes="muted")
             yield Static("", id="count-line", classes="muted")
             with Horizontal(classes="field-row"):
                 yield Label("输出目录")
                 yield Input(self.settings.resolved_output_dir(), id="out-dir")
                 yield Button("浏览", id="browse-out")
-            yield Checkbox("包含子目录", value=self.settings.include_subdirs, id="include-subdirs")
+            yield BoxCheckbox("包含子目录", value=self.settings.include_subdirs, id="include-subdirs")
             with Horizontal(classes="field-row"):
                 yield Label("并行进程")
                 yield Input(str(self.settings.effective_processes()), id="processes", type="integer")
@@ -183,6 +183,7 @@ class DirPlanScreen(ModalScreen):
                 yield Button("开始解密", id="start", variant="primary")
 
     def on_mount(self) -> None:
+        self.query_one("#dir-dialog").border_title = "确认目录解密参数"
         self._refresh_count()
 
     def _recursive(self) -> bool:
@@ -264,8 +265,7 @@ class SettingsScreen(ModalScreen):
         self.settings = settings
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog-small"):
-            yield Static("设置", classes="dialog-title")
+        with Vertical(classes="dialog-small", id="settings-dialog"):
             with Horizontal(classes="field-row"):
                 yield Label("默认输入目录")
                 yield Input(self.settings.input_dir, id="input-dir")
@@ -274,7 +274,7 @@ class SettingsScreen(ModalScreen):
                 yield Label("默认输出目录")
                 yield Input(self.settings.output_dir, id="output-dir")
                 yield Button("浏览", id="browse-output")
-            yield Checkbox("扫描目录时包含子目录", value=self.settings.include_subdirs,
+            yield BoxCheckbox("扫描目录时包含子目录", value=self.settings.include_subdirs,
                            id="include-subdirs")
             with Horizontal(classes="field-row"):
                 yield Label("WAV 处理")
@@ -295,6 +295,7 @@ class SettingsScreen(ModalScreen):
                 yield Button("保存", id="save", variant="primary")
 
     def on_mount(self) -> None:
+        self.query_one("#settings-dialog").border_title = "设置"
         self.query_one("#save", Button).focus()
 
     def action_cancel(self) -> None:
@@ -380,8 +381,8 @@ class RunScreen(ModalScreen):
         self._finished = False
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static(self.heading, classes="dialog-title")
+        with Vertical(classes="dialog", id="run-dialog"):
+            yield Static(self.heading, classes="muted")
             yield ProgressBar(total=len(self.tasks), id="bar")
             yield Static("准备中…", id="status", classes="muted")
             yield RichLog(id="log", wrap=True, markup=True, max_lines=1000)
@@ -390,6 +391,7 @@ class RunScreen(ModalScreen):
                 yield Button("完成", id="done", variant="primary", disabled=True)
 
     def on_mount(self) -> None:
+        self.query_one("#run-dialog").border_title = "解密进度"
         self.query_one("#log", RichLog).write(
             f"[b]共 {len(self.tasks)} 个文件，并行 {self.processes}[/b]"
         )

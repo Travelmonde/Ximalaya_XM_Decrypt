@@ -1,24 +1,34 @@
-"""TUI 应用与主界面。"""
+"""TUI 应用与主界面。
+
+视觉上刻意做成 DOS 时代的全屏界面（单线框 + 框线标题 + 黄色当前项），
+不使用 Textual 的 Header / Footer / Button 默认外观，详见 styles.tcss。
+"""
 
 from __future__ import annotations
 
 import pathlib
 import sys
+from datetime import datetime
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Static
+from textual.widgets import RichLog, Static
 
+from .. import __version__
 from ..batch import make_task
 from ..metadata import scan_xm_files
 from ..settings import Settings, settings_path
 from .picker import FilePicker, expand_user
 from .screens import DirPlanScreen, PlanScreen, RunScreen, SettingsScreen
+from .widgets import HintBar, MenuList, TitleBar
 
 _STYLE_FILE = pathlib.Path(__file__).with_name("styles.tcss")
+
+APP_NAME = "XM 解密工具"
+DISCLAIMER = "仅供学习交流，请勿用于商业用途"
 
 
 def _read_archive_css() -> str:
@@ -44,33 +54,63 @@ class MainScreen(Screen):
         Binding("s", "open_settings", "设置"),
     ]
 
+    MENU = (
+        ("解密 .xm 文件", "files"),
+        ("解密整个目录", "dir"),
+        ("设置", "settings"),
+        ("退出", "quit"),
+    )
+
     def __init__(self, settings: Settings):
         super().__init__()
         self.settings = settings
         self.last_result: dict | None = None
 
+    # ---------- 布局 ----------
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        yield TitleBar(APP_NAME, f"v{__version__}")
+        yield HintBar()
         with Horizontal(id="body"):
-            with Vertical(id="sidebar"):
-                yield Static("XM 解密工具", id="logo")
-                yield Button("解密 .xm 文件", id="btn-files", variant="primary")
-                yield Button("解密整个目录", id="btn-dir")
-                yield Button("设置", id="btn-settings")
-                yield Button("退出", id="btn-quit")
-            with VerticalScroll(id="panel"):
+            with Vertical(id="menu-box", classes="panel"):
+                yield MenuList(self.MENU, id="menu")
+            with Vertical(id="info-box", classes="panel"):
                 yield Static("", id="summary")
-        yield Footer()
+        with Vertical(id="status-box", classes="panel"):
+            yield Static("", id="status")
+        with Vertical(id="log-box", classes="panel"):
+            yield RichLog(id="log", wrap=True, markup=True, max_lines=500)
 
     def on_mount(self) -> None:
+        for selector, title in (
+            ("#menu-box", "操作"),
+            ("#info-box", "当前设置"),
+            ("#status-box", "状态 / 消息"),
+            ("#log-box", "日志"),
+        ):
+            self.query_one(selector, Vertical).border_title = title
+        self.update_hint()
         self.refresh_summary()
-        self.query_one("#btn-files", Button).focus()
+        self.query_one("#menu", MenuList).focus()
+        self.log_line(f"界面已就绪 · 版本 v{__version__}")
+
+    # ---------- 共用输出 ----------
+    def log_line(self, text: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.query_one("#log", RichLog).write(f"[dim]{stamp}[/dim]  {text}")
+
+    def set_status(self, text: str) -> None:
+        self.query_one("#status", Static).update(text)
+
+    def update_hint(self) -> None:
+        output = expand_user(self.settings.resolved_output_dir())
+        self.query_one(HintBar).set_text(
+            f"输出目录: {output}  │  {DISCLAIMER}"
+        )
 
     def refresh_summary(self) -> None:
         settings = self.settings
         wav_label = "保留 WAV" if settings.wav_mode == "keep" else "转 ALAC (.m4a)"
         lines = [
-            "[b]当前设置[/b]",
             f"默认输入目录：{escape(settings.resolved_input_dir())}",
             f"默认输出目录：{escape(settings.resolved_output_dir())}",
             f"扫描含子目录：{'是' if settings.include_subdirs else '否'}",
@@ -78,24 +118,34 @@ class MainScreen(Screen):
             f"并行进程：{settings.effective_processes()}",
             f"设置文件：{escape(str(settings_path()))}",
         ]
-        if self.last_result:
-            status = "已停止" if self.last_result.get("stopped") else "完成"
-            lines += [
-                "",
-                "[b]上次任务[/b]",
-                f"{status}：共 {self.last_result['total']} 个，"
-                f"成功 {self.last_result['ok']}，失败 {self.last_result['fail']}",
-            ]
-        lines += [
-            "",
-            "[b]快捷键[/b]  F 文件解密　D 目录解密　S 设置　Q 退出",
-            "",
-            "[dim]本工具仅供学习交流使用，严禁用于商业用途。[/dim]",
-        ]
         self.query_one("#summary", Static).update("\n".join(lines))
 
+        status = ["↑↓ 移动，Enter 确认；快捷键 F 文件 / D 目录 / S 设置 / Q 退出"]
+        if self.last_result:
+            result = self.last_result
+            prefix = "已停止" if result.get("stopped") else "完成"
+            status.append(
+                f"上次任务：{prefix}，共 {result['total']} 个，"
+                f"成功 [green]{result['ok']}[/green]，失败 [red]{result['fail']}[/red]"
+            )
+        else:
+            status.append(f"等待操作 · {DISCLAIMER}")
+        self.set_status("\n".join(status))
+
     # ---------- 导航 ----------
+    def on_menu_list_activated(self, event: MenuList.Activated) -> None:
+        mapping = {
+            "files": self.action_pick_files,
+            "dir": self.action_pick_dir,
+            "settings": self.action_open_settings,
+            "quit": self.action_quit_app,
+        }
+        handler = mapping.get(event.action)
+        if handler:
+            handler()
+
     def action_pick_files(self) -> None:
+        self.log_line("打开文件选择器")
         self.app.push_screen(
             FilePicker(self.settings.resolved_input_dir(), pick_mode="files"),
             self._on_files_picked,
@@ -103,10 +153,13 @@ class MainScreen(Screen):
 
     def _on_files_picked(self, result) -> None:
         if not result:
+            self.log_line("已取消文件选择")
             return
+        self.log_line(f"选中 {len(result)} 个 .xm 文件")
         self.app.push_screen(PlanScreen(list(result), self.settings), self._on_plan_ready)
 
     def action_pick_dir(self) -> None:
+        self.log_line("打开目录选择器")
         self.app.push_screen(
             FilePicker(self.settings.resolved_input_dir(), pick_mode="dirs",
                        heading="选择要解密的目录"),
@@ -115,36 +168,45 @@ class MainScreen(Screen):
 
     def _on_dir_picked(self, result) -> None:
         if not result:
+            self.log_line("已取消目录选择")
             return
         files = scan_xm_files(str(result), recursive=self.settings.include_subdirs)
         if not files:
+            self.log_line(f"[yellow]目录内没有 .xm 文件：{escape(str(result))}[/yellow]")
             self.notify("该目录下没有 .xm 文件，可在设置里开启“包含子目录”后重试",
                         severity="warning")
             return
+        self.log_line(f"目录 {escape(str(result))} 下找到 {len(files)} 个 .xm 文件")
         self.app.push_screen(DirPlanScreen(str(result), self.settings), self._on_plan_ready)
 
     def action_open_settings(self) -> None:
+        self.log_line("打开设置")
         self.app.push_screen(SettingsScreen(self.settings), self._on_settings_saved)
 
     def _on_settings_saved(self, result) -> None:
         if result is None:
+            self.log_line("设置未修改")
             return
         self.settings = result
         self.app.settings = result
+        self.update_hint()
         self.refresh_summary()
         self.notify("设置已保存")
+        self.log_line("设置已保存")
 
     # ---------- 执行 ----------
     def _on_plan_ready(self, plan) -> None:
         if not plan:
+            self.log_line("已取消本次任务")
             return
         tasks = self.build_tasks(plan)
         # 进程数不超过文件数，避免为 1 个文件拉起 8 个进程。
         processes = max(1, min(plan["processes"], len(tasks)))
         heading = (
-            f"解密 {len(tasks)} 个文件 · 并行 {processes} · "
+            f"{len(tasks)} 个文件 · 并行 {processes} · "
             f"输出 {expand_user(plan['output_dir'])}"
         )
+        self.log_line(f"[b]开始解密[/b] {len(tasks)} 个文件，并行 {processes}")
         self.app.push_screen(RunScreen(tasks, processes, heading), self._on_run_finished)
 
     @staticmethod
@@ -174,23 +236,18 @@ class MainScreen(Screen):
         return tasks
 
     def _on_run_finished(self, result) -> None:
-        if result:
-            self.last_result = result
-            self.refresh_summary()
+        if not result:
+            return
+        self.last_result = result
+        prefix = "已停止" if result.get("stopped") else "完成"
+        self.log_line(
+            f"[b]{prefix}[/b]：成功 [green]{result['ok']}[/green]，"
+            f"失败 [red]{result['fail']}[/red]"
+        )
+        self.refresh_summary()
 
     def action_quit_app(self) -> None:
         self.app.exit()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        mapping = {
-            "btn-files": self.action_pick_files,
-            "btn-dir": self.action_pick_dir,
-            "btn-settings": self.action_open_settings,
-            "btn-quit": self.action_quit_app,
-        }
-        handler = mapping.get(event.button.id or "")
-        if handler:
-            handler()
 
 
 class XMDecryptApp(App):
@@ -200,8 +257,7 @@ class XMDecryptApp(App):
     # ".../app.pyz/xm_decrypt/tui/styles.tcss" 这种不存在的路径而报错。
     CSS_PATH = "styles.tcss" if _STYLE_FILE.exists() else None
     CSS = "" if _STYLE_FILE.exists() else _ARCHIVE_CSS
-    TITLE = "喜马拉雅 XM 解密工具"
-    SUB_TITLE = "仅供学习交流使用"
+    TITLE = f"{APP_NAME} v{__version__}"
     ENABLE_COMMAND_PALETTE = False
 
     def __init__(self, settings: Settings | None = None):

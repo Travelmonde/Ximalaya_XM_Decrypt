@@ -5,8 +5,10 @@
 
 使用前请确保 `xm_encryptor.wasm` 与 `main.py` 位于同一目录（放在 `xm_decrypt/` 包目录下也能被找到）。
 
+> **版本状态：0.1.0。** 完整流程只在单个样本上验证过——真机上带 `N/M` 音轨号的多音轨文件、wav/flac/mp3 载体的 xm 都没测过。操作前请自行备份原始 `.xm`。版本号保持 0.x，直到覆盖面补上来。
+
 ## 功能特点
-- **终端界面（TUI）**：全键盘操作，不依赖 tkinter，服务器 / SSH 环境同样可用
+- **终端界面（TUI）**：DOS 风格单线框 + 键盘菜单，全键盘操作，不依赖 tkinter，服务器 / SSH 环境同样可用
 - **多选解密 + 逐个改名**：一次选中多个 `.xm`，每个文件都能单独指定输出名
 - **目录批量解密**：可选是否包含子目录，支持多进程并行
 - **设置持久化**：默认输入/输出目录、是否含子目录、WAV 处理方式、并行数都会记住
@@ -19,11 +21,11 @@
 **A. 直接跑单文件可执行程序（免安装 Python 依赖）**
 
 从 Release 下载对应平台的 `.pyz`，例如 Linux x86-64 用
-`xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz`：
+`xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz`：
 
 ```bash
-python3 xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz            # 终端界面
-python3 xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz --cli -h   # 命令行
+python3 xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz            # 终端界面
+python3 xm-decrypt-0.1.0-py3-none-linux_x86_64.pyz --cli -h   # 命令行
 ```
 
 首次运行会把内置依赖解压到 `~/.cache/xm-decrypt/`（约 53 MB，1 秒左右），之后直接复用。
@@ -70,7 +72,9 @@ xm-decrypt --cli -h   # 命令行
 python main.py
 ```
 
-启动后进入主界面，左侧为功能入口，右侧显示当前设置：
+启动后进入主界面：顶部是程序名与主机名，下面是黄底的常驻提示条，
+正文分四块——**操作**（键盘菜单）、**当前设置**、**状态 / 消息**、**日志**。
+菜单用 `↑` `↓` 移动、`Enter` 确认，也可以直接按下面的字母键：
 
 | 按键 | 作用 |
 | --- | --- |
@@ -78,6 +82,8 @@ python main.py
 | `D` | 解密整个目录 |
 | `S` | 设置 |
 | `Q` | 退出 |
+
+界面配色只有黑 / 白 / 灰 / 青 / 黄五种，当前项用黄色加粗和 `>>` 标记，不依赖 256 色终端。
 
 ### 文件选择页
 | 按键 | 作用 |
@@ -146,10 +152,11 @@ python main.py --cli --settings                          # 打印当前设置
     ├── settings.py          设置持久化
     ├── cli.py               命令行模式
     └── tui/                 Textual 终端界面
-        ├── app.py           应用与主界面
+        ├── app.py           应用与主界面（标题栏 + 菜单 + 状态 + 日志）
+        ├── widgets.py       自绘控件：标题栏、提示条、键盘菜单、[x] 复选框
         ├── picker.py        文件 / 目录选择器（多选与选目录共用）
         ├── screens.py       命名确认 / 目录确认 / 设置 / 运行页
-        └── styles.tcss      样式
+        └── styles.tcss      样式（黑底单线框，配色集中在这一处）
 ```
 
 分层原则：`metadata` 只读文件头，`decryptor` 只算字节，`exporter` 只负责落盘，`batch` 只负责调度，界面层不碰解密细节。要在其他脚本里复用，直接 `from xm_decrypt import decrypt_xm_to` 即可。
@@ -189,7 +196,7 @@ python xm-decrypt-standalone.pyz --cli -h     # 命令行
 - 首次运行约 7 秒（解压 54 MB），之后不到 1 秒。
 
 实测在**完全没装依赖**的系统 Python 3.12 上：解密产物 sha256 `c5ebb5d1…` 与源码一致，
-`-j 2` 并行正常，TUI 渲染出的样式规则数仍是 135。
+`-j 2` 并行正常，TUI 渲染出的样式规则数仍是 106。
 
 ### 精简版 .pyz
 
@@ -204,7 +211,7 @@ zipapp 只是把代码打成 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的�
 上面两种 `.pyz` 共用的两个实现细节（改代码时别踩）：
 
 - **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。所以单独拷一个 `.pyz` 出去也能跑，不必附带 wasm。
-- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 135 条，外观一致。
+- **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 106 条，外观一致。
 
 ### 发行版（多平台）
 

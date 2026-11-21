@@ -29,7 +29,9 @@ from .metadata import (
 )
 from .settings import Settings, default_process_count, settings_path
 
-__version__ = "2.0.0"
+# 老实点：功能只在单个样本上验证过，多音轨 / 其它载体格式都还没覆盖，
+# 给个 0.x 版本号，别装成正式版。
+__version__ = "0.1.0"
 
 __all__ = [
     "XMInfo",
