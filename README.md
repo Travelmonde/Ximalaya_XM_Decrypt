@@ -55,7 +55,12 @@ xm-decrypt            # 终端界面
 xm-decrypt --cli -h   # 命令行
 ```
 
-装的是一个 53 KB 的 `.pyz`，但 shebang 指向**当前解释器的绝对路径**，所以 `xm-decrypt` 一敲就能跑，不会因为系统 python 缺 `pycryptodome` 而报错。装完脚本会自动跑一次 `--cli -h` 自检。
+默认装的是**内嵌依赖**的版本（15 MB）：第三方库都在归档里，shebang 只用系统 `python3`，
+首次运行解压到 `~/.cache/xm-decrypt/`。好处是换机器、删虚拟环境都不受影响。
+装完脚本会自动跑一次 `--cli -h` 自检。
+
+想省空间可以用 `python tools/install.py --minimal`，装 53 KB 版本，
+此时 shebang 指向当前解释器的绝对路径，要求该解释器已装好依赖。
 
 ## 使用
 ```bash
@@ -123,8 +128,9 @@ python main.py --cli --settings                          # 打印当前设置
 ├── requirements.txt
 ├── tools/                   开发与发布脚本（不参与运行）
 │   ├── install.py           打包并安装成 `xm-decrypt` 命令
-│   ├── build_pyz.py         打包成单文件 .pyz
+│   ├── build_pyz.py         打包成 .pyz（可内嵌依赖）
 │   ├── build_exe.py         打包成免依赖可执行程序
+│   ├── _vendor_boot.py      带依赖的 .pyz 首启解压逻辑
 │   ├── verify_baseline.py   解密产物哈希回归
 │   └── test_tui.py          界面端到端测试（Textual pilot）
 └── xm_decrypt/              核心库
@@ -148,31 +154,47 @@ python main.py --cli --settings                          # 打印当前设置
 
 ## 打包与分发
 
-两种产物各有取舍：
+三种产物，按「要不要在目标机器装依赖」选：
 
-| | `.pyz` | 可执行程序 |
-| --- | --- | --- |
-| 体积 | 约 53 KB | 约 100 MB |
-| 构建工具 | 标准库 `zipapp` | PyInstaller |
-| 运行前提 | 目标机器已装好依赖 | 无，自带解释器和原生库 |
-| 适用 | 自己有 Python 环境 / 内部分发 | 给不想装环境的人 |
+| 产物 | 体积 | 构建 | 目标机器要求 |
+| --- | --- | --- | --- |
+| `xm-decrypt.pyz` | 53 KB | `build_pyz.py` | 已装好依赖 |
+| `xm-decrypt-standalone.pyz` | 15 MB | `build_pyz.py --with-deps` | 只需 `python3`（3.9+） |
+| `xm-decrypt`（可执行） | 81 MB | `build_exe.py` | 什么都不用，连 Python 都不需要 |
 
-### 单文件 .pyz
-
-```bash
-python tools/build_pyz.py
-```
-
-产物 `dist/xm-decrypt.pyz`，把 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm` 全部封进一个压缩归档：
+### 单文件 .pyz（含内置依赖）
 
 ```bash
-python xm-decrypt.pyz              # TUI
-python xm-decrypt.pyz --cli -h     # 命令行
+python tools/build_pyz.py --with-deps     # → dist/xm-decrypt-standalone.pyz
 ```
 
-**它不含第三方依赖**——zipapp 只是把代码打成一个 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的原生扩展，无法从 zip 里 import。所以换机器跑之前仍要 `pip install -r requirements.txt`，缺依赖时程序会提示装哪些包。
+```bash
+python xm-decrypt-standalone.pyz              # TUI
+python xm-decrypt-standalone.pyz --cli -h     # 命令行
+```
 
-两个实现细节（改代码时别踩）：
+**`.pyz` 是 zip，无法直接 import 原生扩展**（`wasmtime/_libwasmtime.so`、`Crypto/**/*.so`），
+所以内嵌依赖不是「塞进 zip 就能用」，而是首启时解压到缓存再挂到 `sys.path`：
+
+- 依赖放在归档的 `_vendor/`，入口 `__main__.py` 先调用 `_xm_vendor.install()`；
+- 解压目标 `~/.cache/xm-decrypt/libs-<pyz 的 sha256 前 16 位>/`，归档变了就换目录，不会读到半新半旧的库；
+- 解压用「临时目录 + 原子改名」，多进程同时首启不会互相踩；家目录不可写时退化为进程级临时目录；
+- 首次运行约 7 秒（解压 54 MB），之后不到 1 秒。
+
+实测在**完全没装依赖**的系统 Python 3.12 上：解密产物 sha256 `c5ebb5d1…` 与源码一致，
+`-j 2` 并行正常，TUI 渲染出的样式规则数仍是 135。
+
+### 精简版 .pyz
+
+```bash
+python tools/build_pyz.py                  # → dist/xm-decrypt.pyz（53 KB）
+```
+
+只含 `main.py`、`xm_decrypt/`、`styles.tcss` 和 `xm_encryptor.wasm`，**不含第三方依赖**——
+zipapp 只是把代码打成 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的原生扩展，无法从 zip 里 import。
+换机器跑之前仍要 `pip install -r requirements.txt`；缺依赖时程序会提示装哪些包。
+
+上面两种 `.pyz` 共用的两个实现细节（改代码时别踩）：
 
 - **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。所以单独拷一个 `.pyz` 出去也能跑，不必附带 wasm。
 - **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 135 条，外观一致。

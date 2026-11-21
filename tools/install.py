@@ -1,12 +1,14 @@
 """把工具安装成一条可直接调用的命令 `xm-decrypt`。
 
-做的事：用**当前解释器**（必须已装好依赖）打包 .pyz，装到 `~/.local/bin/xm-decrypt`。
-之所以不写 `#!/usr/bin/env python3`，是因为 .pyz 只含本项目代码，第三方库得靠解释器
-提供；把解释器绝对路径写进 shebang，才能保证 `xm-decrypt` 一敲就跑，不会因为
-系统 python 缺 pycryptodome 而报 `No module named 'Crypto'`。
+默认装**内嵌依赖**的版本（约 15 MB）：第三方库都在归档里，首次运行解压到
+`~/.cache/xm-decrypt/`，之后 shebang 只用系统 `python3`，换机器、删虚拟环境都不受影响。
+
+`--minimal` 装 53 KB 的精简版，shebang 指向当前解释器的绝对路径，
+适合本机已装好依赖、只想省空间的情况。
 
 用法：
-    python tools/install.py              # 安装 / 覆盖升级
+    python tools/install.py              # 安装 / 覆盖升级（自带依赖）
+    python tools/install.py --minimal    # 精简版
     python tools/install.py --uninstall  # 卸载
     python tools/install.py --dir ~/bin  # 装到别处
 """
@@ -46,25 +48,38 @@ def on_path(directory: Path) -> bool:
     return str(directory) in os.environ.get("PATH", "").split(os.pathsep)
 
 
-def install(directory: Path) -> int:
+def install(directory: Path, minimal: bool = False) -> int:
     check_interpreter()
-    shebang = f"#!{sys.executable}"
-    if len(shebang) > 127:
-        # 内核 shebang 上限 127 字节，超了会静默失败
-        raise SystemExit(f"解释器路径过长（{len(shebang)} > 127），请把虚拟环境放到更短的路径下")
+
+    if minimal:
+        # 不带依赖：shebang 必须指向装好依赖的解释器，否则跑不起来
+        shebang = f"#!{sys.executable}"
+        interpreter = sys.executable
+        if len(shebang) > 127:
+            # 内核 shebang 上限 127 字节，超了会静默失败
+            raise SystemExit(f"解释器路径过长（{len(shebang)} > 127），请把虚拟环境放到更短的路径下")
+    else:
+        # 默认装自带依赖的版本：只要求系统有 python3，换机器/删虚拟环境都不受影响
+        interpreter = "/usr/bin/env python3"
+        version = subprocess.run(
+            [sys.executable, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        print(f"内嵌依赖：pycryptodome / mutagen / wasmtime / textual（取自当前 {version} 环境）")
 
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / COMMAND
 
-    # 直接产出带绝对 shebang 的 pyz，装的就是它本身，不是包装脚本
-    build(target=target, interpreter=sys.executable)
+    # 直接产出 pyz 装到目标位置，装的就是它本身，不是包装脚本
+    build(target=target, interpreter=interpreter, with_deps=not minimal)
     target.chmod(0o755)
 
     data = target.read_bytes()
     print(f"已安装：{target}")
     print(f"大小：{len(data) / 1024:.1f} KB")
     print(f"sha256：{hashlib.sha256(data).hexdigest()[:16]}")
-    print(f"解释器：{sys.executable}")
+    print(f"shebang：{interpreter}")
 
     # 自检：直接执行装好的文件，走真实 shebang 路径
     probe = subprocess.run([str(target), "--cli", "-h"], capture_output=True, text=True)
@@ -96,6 +111,7 @@ def uninstall(directory: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="安装 xm-decrypt 命令")
     parser.add_argument("--dir", default=str(DEFAULT_DIR), help="安装目录（默认 ~/.local/bin）")
+    parser.add_argument("--minimal", action="store_true", help="不内嵌依赖，装 53 KB 版本（要求解释器已有依赖）")
     parser.add_argument("--uninstall", action="store_true", help="卸载")
     args = parser.parse_args()
 
@@ -103,7 +119,7 @@ def main() -> int:
     if args.uninstall:
         return uninstall(directory)
     print(f"源目录：{ROOT}")
-    return install(directory)
+    return install(directory, minimal=args.minimal)
 
 
 if __name__ == "__main__":
