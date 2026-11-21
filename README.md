@@ -18,13 +18,16 @@
 
 **A. 直接跑单文件可执行程序（免安装 Python 依赖）**
 
-从 Release 下载 `xm-decrypt`（Linux x86-64），加执行权限后直接运行：
+从 Release 下载对应平台的 `.pyz`，例如 Linux x86-64 用
+`xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz`：
 
 ```bash
-chmod +x xm-decrypt
-./xm-decrypt            # 终端界面
-./xm-decrypt --cli -h   # 命令行
+python3 xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz            # 终端界面
+python3 xm-decrypt-2.0.0-py3-none-linux_x86_64.pyz --cli -h   # 命令行
 ```
+
+首次运行会把内置依赖解压到 `~/.cache/xm-decrypt/`（约 53 MB，1 秒左右），之后直接复用。
+路径含中文、想换个地方时，设置 `XDG_CACHE_HOME` 即可。
 
 **B. 从源码运行**
 
@@ -128,7 +131,8 @@ python main.py --cli --settings                          # 打印当前设置
 ├── requirements.txt
 ├── tools/                   开发与发布脚本（不参与运行）
 │   ├── install.py           打包并安装成 `xm-decrypt` 命令
-│   ├── build_pyz.py         打包成 .pyz（可内嵌依赖）
+│   ├── build_release.py     多平台发行版 + 校验和清单
+│   ├── build_pyz.py         打包单个 .pyz（可内嵌依赖）
 │   ├── build_exe.py         打包成免依赖可执行程序
 │   ├── _vendor_boot.py      带依赖的 .pyz 首启解压逻辑
 │   ├── verify_baseline.py   解密产物哈希回归
@@ -154,13 +158,16 @@ python main.py --cli --settings                          # 打印当前设置
 
 ## 打包与分发
 
-三种产物，按「要不要在目标机器装依赖」选：
+按「要不要在目标机器装依赖」选产物：
 
 | 产物 | 体积 | 构建 | 目标机器要求 |
 | --- | --- | --- | --- |
-| `xm-decrypt.pyz` | 53 KB | `build_pyz.py` | 已装好依赖 |
-| `xm-decrypt-standalone.pyz` | 15 MB | `build_pyz.py --with-deps` | 只需 `python3`（3.9+） |
+| `-py3-none-any.pyz` | 53 KB | `build_release.py` / `build_pyz.py` | 已装好依赖 |
+| `-py3-none-<平台>.pyz` | 12–15 MB | `build_release.py` | 只需 `python3`（3.9+），按平台分发 |
 | `xm-decrypt`（可执行） | 81 MB | `build_exe.py` | 什么都不用，连 Python 都不需要 |
+
+发布用 `build_release.py`（一次产出全部平台 + 校验和清单）；`build_pyz.py` 是它的底层，
+只打单个包，想改打包细节时用。
 
 ### 单文件 .pyz（含内置依赖）
 
@@ -198,6 +205,38 @@ zipapp 只是把代码打成 zip，`wasmtime`、`pycryptodome` 是带 `.so` 的�
 
 - **wasm 必须打进归档**。`wasm.py` 先用磁盘候选路径找 `xm_encryptor.wasm`，找不到就通过 zipimporter 的 `archive` 属性从归档内部读字节，交给 `wasmtime.Module(engine, bytes)`。所以单独拷一个 `.pyz` 出去也能跑，不必附带 wasm。
 - **样式不能再用 `CSS_PATH`**。Textual 会用 `inspect.getfile()` 拼出 `.../xm-decrypt.pyz/xm_decrypt/tui/styles.tcss` 这种磁盘上不存在的路径。现在磁盘上有文件时仍走 `CSS_PATH`（保留开发期热重载），打包运行时改为从归档读文本塞进 `CSS`。两种方式加载的样式规则数都是 135 条，外观一致。
+
+### 发行版（多平台）
+
+```bash
+python tools/build_release.py            # 全部平台
+python tools/build_release.py --native-only    # 只打本机
+```
+
+产物命名沿用 wheel 的 tag 风格 `xm-decrypt-<版本>-py3-none-<平台>.pyz`：
+
+| 文件 | 平台 | 大小 |
+| --- | --- | --- |
+| `...-py3-none-any.pyz` | 通用（纯 Python） | 53 KB |
+| `...-py3-none-linux_x86_64.pyz` | Linux x86-64 | 14.6 MB |
+| `...-py3-none-linux_aarch64.pyz` | Linux ARM64 | 13.2 MB |
+| `...-py3-none-win_amd64.pyz` | Windows x64 | 11.9 MB |
+| `...-py3-none-macosx_11_0_arm64.pyz` | macOS Apple Silicon | 12.1 MB |
+| `...-py3-none-macosx_10_13_x86_64.pyz` | macOS Intel | 12.8 MB |
+
+同时生成 `dist/SHA256SUMS-<版本>.txt`，发布时一并附上。
+
+**必须按平台分开打包，不能一个包通吃**：包里的 `wasmtime/linux-x86_64/_libwasmtime.so`、
+`Crypto/Cipher/_ARC4.pyd` 都是按平台编译的二进制；而且 macOS 与 Linux 的 pycryptodome
+扩展**同名**（都叫 `_ARC4.abi3.so`），装不进同一个包。
+
+本机平台用已安装的依赖打包并实测；其它平台由脚本从 PyPI 下载对应 wheel 组装，
+**只做了结构校验**（确认原生库文件名、架构目录正确），没有真机运行过。
+脚本会打印每个产物是「本机实测」还是「仅结构校验」，别把后者当已验证。
+
+交叉打包踩过的一个坑：macOS Intel 必须写 `macosx_10_13_x86_64`（wasmtime 提供的最低版本）。
+写成 `macosx_10_9_x86_64` 会让 pip 匹配不上，退回到一个「标着 `any` 却只含 Windows DLL」的
+废包，打出来的产物在 Mac 上必然启动失败——所以脚本里有原生库存在性校验，缺了直接报错。
 
 ### 免依赖可执行程序
 

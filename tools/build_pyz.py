@@ -61,17 +61,20 @@ VENDOR_ITEMS = (
 BOOTSTRAP_NAME = "_xm_vendor.py"
 
 # 带依赖版入口：先解压依赖，再调用 main.py 的 main()。
+# 必须有 __main__ 保护：spawn 子进程会把入口模块当作 __mp_main__ 重新执行，
+# 没有保护就会在子进程里再跑一遍 CLI（Windows 上必然触发，其它平台看 main_path 能否解析）。
 ENTRY_WITH_DEPS = '''"""自动生成的入口：先把内嵌依赖解压到缓存，再运行主程序。"""
 
-import sys
+if __name__ == "__main__":
+    import sys
 
-import _xm_vendor
+    import _xm_vendor
 
-_xm_vendor.install()
+    _xm_vendor.install()
 
-import main as _entry
+    import main as _entry
 
-sys.exit(_entry.main())
+    sys.exit(_entry.main())
 '''
 
 
@@ -136,12 +139,16 @@ def build(
     target: Path = TARGET,
     interpreter: str = "/usr/bin/env python3",
     with_deps: bool = False,
+    vendor_dir: Path | None = None,
 ) -> Path:
     """interpreter 写进产物首行 shebang。
 
     默认 `/usr/bin/env python3`，分发时不绑定具体机器；
     `tools/install.py` 会传当前解释器的绝对路径，好处是双击就能用、
     且天然带着已装好的依赖（.pyz 不含第三方库，必须由解释器提供）。
+
+    vendor_dir 非空时从该目录取第三方依赖（发行版构建会先下载对应平台的 wheel
+    解压到这里），为空则从当前解释器的 site-packages 取。
     """
     # 暂存目录不能建在项目内：本项目所在挂载点删除文件会落到 .Trash-0，留垃圾。
     staging = Path(tempfile.mkdtemp(prefix="pyz_build_", dir=_staging_root()))
@@ -151,7 +158,10 @@ def build(
             shutil.copy2(ROOT / "main.py", staging / "main.py")
             (staging / "__main__.py").write_text(ENTRY_WITH_DEPS, encoding="utf-8")
             shutil.copy2(ROOT / "tools" / "_vendor_boot.py", staging / BOOTSTRAP_NAME)
-            _copy_vendor(staging)
+            if vendor_dir is None:
+                _copy_vendor(staging)
+            else:
+                shutil.copytree(vendor_dir, staging / "_vendor", ignore=_ignore)
         else:
             # 无依赖版：main.py 直接改名，避免维护两份入口
             shutil.copy2(ROOT / "main.py", staging / "__main__.py")
