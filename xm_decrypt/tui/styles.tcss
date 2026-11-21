@@ -110,9 +110,11 @@ ListView > ListItem {
     height: 1;
 }
 
-ListView > ListItem.-hovered {
-    background: $bg;
-    color: $accent;
+/* 鼠标悬停：背景抬一档 + 白字，给鼠标用户一个落点反馈（操作菜单与文件列表共用）。
+ * 伪类是 :hover；Textual 没有 -hovered 这个类名，写了也不会生效。 */
+ListView > ListItem:hover {
+    background: #1c1c1c;
+    color: #ffffff;
 }
 
 ListView > ListItem.-highlight {
@@ -123,6 +125,19 @@ ListView > ListItem.-highlight {
 
 ListView:focus > ListItem.-highlight {
     background: $bg;
+    color: $accent;
+    text-style: bold;
+}
+
+/* 悬停与当前项重叠时仍以黄色为准，但保留背景变化 */
+ListView > ListItem.-highlight:hover {
+    background: #1c1c1c;
+    color: $dim;
+    text-style: none;
+}
+
+ListView:focus > ListItem.-highlight:hover {
+    background: #1c1c1c;
     color: $accent;
     text-style: bold;
 }

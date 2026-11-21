@@ -82,6 +82,19 @@ async def main():
         check("显示默认输入目录", "默认输入目录" in summary)
         check("显示设置文件位置", "settings.json" in summary)
 
+        # 鼠标悬停要靠 :hover 伪类。写成 -hovered 这类不存在的类名既不报错也不生效，
+        # 界面上只表现为「鼠标划过没反应」，所以固定成断言。
+        menu_items = app.screen.query_one("#menu").children
+        await pilot.hover(menu_items[1])
+        await pilot.pause()
+        bg = menu_items[1].styles.background
+        check("菜单项悬停有背景反馈", (bg.r, bg.g, bg.b) == (28, 28, 28), str(bg))
+
+        await pilot.hover(menu_items[0])
+        await pilot.pause()
+        fg = menu_items[0].styles.color
+        check("当前项悬停后仍是黄色", (fg.r, fg.g, fg.b) == (255, 255, 0), str(fg))
+
         print("2) 文件选择器")
         await pilot.press("f")
         await pilot.pause()
