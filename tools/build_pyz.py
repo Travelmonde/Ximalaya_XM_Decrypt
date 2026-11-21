@@ -33,7 +33,13 @@ def _ignore(_dir: str, names: list[str]) -> set[str]:
     return {name for name in names if name == "__pycache__" or name.endswith((".pyc", ".pyo"))}
 
 
-def build(target: Path = TARGET) -> Path:
+def build(target: Path = TARGET, interpreter: str = "/usr/bin/env python3") -> Path:
+    """interpreter 写进产物首行 shebang。
+
+    默认 `/usr/bin/env python3`，分发时不绑定具体机器；
+    `tools/install.py` 会传当前解释器的绝对路径，好处是双击就能用、
+    且天然带着已装好的依赖（.pyz 不含第三方库，必须由解释器提供）。
+    """
     # 暂存目录用系统临时目录：源文件合计约 330KB，普通 tmpfs 足够；
     # 且本项目所在的挂载点删除文件会落到 .Trash-0，建在项目内会留下垃圾。
     staging = Path(tempfile.mkdtemp(prefix="pyz_build_"))
@@ -54,7 +60,7 @@ def build(target: Path = TARGET) -> Path:
         zipapp.create_archive(
             staging,
             target=str(target),
-            interpreter="/usr/bin/env python3",
+            interpreter=interpreter,
             compressed=True,
         )
     finally:

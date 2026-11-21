@@ -39,6 +39,24 @@ pip install -r requirements.txt
 
 启动时会先检查依赖，缺哪一个会直接提示对应的 `pip install` 命令，不会抛一堆堆栈。
 
+**C. 装成系统命令 `xm-decrypt`（推荐）**
+
+源码和环境就绪后，一条命令装到 `~/.local/bin`：
+
+```bash
+python tools/install.py              # 安装 / 覆盖升级
+python tools/install.py --uninstall  # 卸载
+```
+
+之后在任何目录直接敲：
+
+```bash
+xm-decrypt            # 终端界面
+xm-decrypt --cli -h   # 命令行
+```
+
+装的是一个 53 KB 的 `.pyz`，但 shebang 指向**当前解释器的绝对路径**，所以 `xm-decrypt` 一敲就能跑，不会因为系统 python 缺 `pycryptodome` 而报错。装完脚本会自动跑一次 `--cli -h` 自检。
+
 ## 使用
 ```bash
 python main.py
@@ -104,6 +122,7 @@ python main.py --cli --settings                          # 打印当前设置
 ├── xm_encryptor.wasm        wasm 解密模块（必需）
 ├── requirements.txt
 ├── tools/                   开发与发布脚本（不参与运行）
+│   ├── install.py           打包并安装成 `xm-decrypt` 命令
 │   ├── build_pyz.py         打包成单文件 .pyz
 │   ├── build_exe.py         打包成免依赖可执行程序
 │   ├── verify_baseline.py   解密产物哈希回归
