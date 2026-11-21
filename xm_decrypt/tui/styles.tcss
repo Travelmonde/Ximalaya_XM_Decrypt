@@ -319,7 +319,7 @@ FilePicker, PlanScreen, DirPlanScreen, SettingsScreen, RunScreen {
     height: auto;
     align-horizontal: right;
     border-top: solid $line;
-    padding-top: 1;
+    padding-top: 0;
     margin-top: 1;
 }
 
